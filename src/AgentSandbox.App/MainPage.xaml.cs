@@ -7,6 +7,7 @@ using AgentSandbox.Domain;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -34,6 +35,26 @@ public sealed partial class MainPage : Page
     }
 
     private void Page_Unloaded(object sender, RoutedEventArgs e) => ViewModel.Dispose();
+
+    private void ShellNavigation_Loaded(object sender, RoutedEventArgs e)
+    {
+        // NavigationView's expanded visual state assigns its internal SplitView pane
+        // after normal resource lookup, so apply the product surface directly there.
+        if (FindVisualChild<SplitView>(ShellNavigation) is { } splitView)
+            splitView.PaneBackground = ShellNavigation.Background;
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match) return match;
+            if (FindVisualChild<T>(child) is { } descendant) return descendant;
+        }
+
+        return null;
+    }
 
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {

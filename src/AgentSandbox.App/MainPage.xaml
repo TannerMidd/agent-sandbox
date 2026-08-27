@@ -12,6 +12,8 @@
 
     <NavigationView x:Name="ShellNavigation" IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
                     PaneDisplayMode="Left" OpenPaneLength="244" CompactPaneLength="52"
+                    Background="{ThemeResource NavigationPaneBackgroundBrush}"
+                    Loaded="ShellNavigation_Loaded"
                     SelectionChanged="Navigation_SelectionChanged">
         <NavigationView.PaneHeader>
             <StackPanel Margin="8,12" Spacing="2">

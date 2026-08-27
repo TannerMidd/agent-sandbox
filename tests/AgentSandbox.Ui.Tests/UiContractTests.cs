@@ -53,6 +53,15 @@ public sealed class UiContractTests
         var app = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "App.xaml"));
         Assert.Contains("RequestedTheme=\"Dark\"", app, StringComparison.Ordinal);
         Assert.Contains("#0B0E14", app, StringComparison.Ordinal);
+        Assert.Contains("NavigationViewExpandedPaneBackground", app, StringComparison.Ordinal);
+        Assert.Contains("NavigationPaneBackgroundBrush", app, StringComparison.Ordinal);
+        Assert.Contains("#172132", app, StringComparison.Ordinal);
+        Assert.Contains("NavigationViewContentGridBorderBrush", app, StringComparison.Ordinal);
+        var mainPage = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml"));
+        Assert.Contains("Background=\"{ThemeResource NavigationPaneBackgroundBrush}\"", mainPage, StringComparison.Ordinal);
+        Assert.Contains("Loaded=\"ShellNavigation_Loaded\"", mainPage, StringComparison.Ordinal);
+        var mainPageCode = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml.cs"));
+        Assert.Contains("splitView.PaneBackground = ShellNavigation.Background", mainPageCode, StringComparison.Ordinal);
         Assert.Contains("HighContrast", app, StringComparison.Ordinal);
     }
 
