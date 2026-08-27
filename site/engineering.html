@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071019">
+  <meta name="description" content="A technical engineering brief for Agent Sandbox: architecture, lifecycle, trust boundaries, contracts, and release gates.">
+  <title>Engineering — Agent Sandbox</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <nav class="nav-wrap" aria-label="Primary navigation">
+      <a class="brand" href="index.html" aria-label="AgentSandbox home">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34.7 11.5v17L20 37 5.3 28.5v-17L20 3Z" fill="none" stroke="currentColor"/><path d="m12 15 8-4.5 8 4.5v10l-8 4.5-8-4.5V15Z" fill="none" stroke="currentColor" opacity=".55"/><circle cx="20" cy="20" r="2.5" fill="currentColor"/></svg>
+        <span>Agent<em>Sandbox</em></span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="site-nav" id="site-nav">
+        <a href="index.html">Showcase</a>
+        <a href="#architecture" aria-current="page">Engineering</a>
+        <a href="#security">Security model</a>
+        <a class="nav-cta" href="https://github.com/TannerMidd/agent-sandbox">Source code ↗</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <header class="page-hero">
+      <div class="container reveal">
+        <p class="eyebrow">Engineering brief / revision 01</p>
+        <h1>Built as a boundary,<br><span class="outline">not a wrapper.</span></h1>
+        <p class="lead">A layered Windows application, a narrow elevated helper, and a daemonless guest protocol turn VM management into explicit, typed, inspectable operations.</p>
+        <div class="doc-meta"><span>PLATFORM // WINDOWS 11 X64</span><span>RUNTIME // .NET 10</span><span>UI // WINUI 3</span><span>HYPERVISOR // HYPER-V</span><span>STATUS // DEVELOPMENT PREVIEW</span></div>
+      </div>
+    </header>
+
+    <div class="container engineering-layout">
+      <aside class="doc-nav" aria-label="On this page">
+        <p>Drawing index</p>
+        <a href="#architecture">01 Architecture</a>
+        <a href="#boundaries">02 Trust boundaries</a>
+        <a href="#lifecycle">03 Lifecycle</a>
+        <a href="#protocol">04 Guest protocol</a>
+        <a href="#security">05 Invariants</a>
+        <a href="#stack">06 Stack &amp; quality</a>
+      </aside>
+
+      <article class="doc-content">
+        <section id="architecture" class="reveal">
+          <p class="section-kicker">01 / System architecture</p>
+          <h2>Separation is a feature.</h2>
+          <p class="intro">Five production assemblies keep UI, policy, orchestration, operating-system integration, and elevated work from collapsing into one trust domain. A standard-library Python helper runs on demand inside the guest and never listens on a port.</p>
+          <figure class="arch-diagram" aria-labelledby="arch-caption">
+            <svg viewBox="0 0 920 470" role="img">
+              <title id="arch-caption">Agent Sandbox architecture showing Windows host layers and an isolated Linux guest</title>
+              <defs><pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#58bdff" stroke-opacity=".08"/></pattern><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="m0 0 8 4-8 4Z" fill="#58bdff"/></marker></defs>
+              <rect width="920" height="470" fill="url(#smallGrid)"/>
+              <text x="28" y="32" fill="#69859a" font-family="monospace" font-size="11">WINDOWS HOST // CURRENT USER</text>
+              <rect x="28" y="53" width="515" height="72" rx="2" fill="#102a3d" stroke="#58bdff" stroke-opacity=".45"/><text x="50" y="83" fill="#edf7ff" font-family="sans-serif" font-size="15" font-weight="600">AgentSandbox.App</text><text x="50" y="105" fill="#89a3b7" font-family="monospace" font-size="11">WINUI · MVVM · COMPOSITION ROOT</text>
+              <rect x="28" y="145" width="248" height="72" rx="2" fill="#0d2232" stroke="#58bdff" stroke-opacity=".3"/><text x="50" y="175" fill="#edf7ff" font-family="sans-serif" font-size="14">Application</text><text x="50" y="197" fill="#89a3b7" font-family="monospace" font-size="10">USE CASES · WORKFLOW ORDER</text>
+              <rect x="295" y="145" width="248" height="72" rx="2" fill="#0d2232" stroke="#58bdff" stroke-opacity=".3"/><text x="317" y="175" fill="#edf7ff" font-family="sans-serif" font-size="14">Domain</text><text x="317" y="197" fill="#89a3b7" font-family="monospace" font-size="10">STATE · POLICY · CONTRACTS</text>
+              <rect x="28" y="237" width="515" height="72" rx="2" fill="#0d2232" stroke="#58bdff" stroke-opacity=".3"/><text x="50" y="267" fill="#edf7ff" font-family="sans-serif" font-size="14">Infrastructure</text><text x="50" y="289" fill="#89a3b7" font-family="monospace" font-size="10">MULTIPASS · FILES · SETTINGS · TERMINAL</text>
+              <rect x="28" y="348" width="245" height="72" rx="2" fill="#172b38" stroke="#ffc66d" stroke-opacity=".55"/><text x="50" y="378" fill="#edf7ff" font-family="sans-serif" font-size="14">SetupHelper</text><text x="50" y="400" fill="#d2a75f" font-family="monospace" font-size="10">ELEVATED · ALLOW-LISTED</text>
+              <rect x="570" y="53" width="322" height="367" rx="2" fill="#0a1c28" stroke="#50e6d0" stroke-opacity=".45" stroke-dasharray="5 5"/><text x="594" y="84" fill="#50e6d0" font-family="monospace" font-size="11">LINUX GUEST // HYPER-V VM</text>
+              <rect x="594" y="113" width="274" height="86" rx="2" fill="#102b35" stroke="#50e6d0" stroke-opacity=".4"/><text x="616" y="146" fill="#edf7ff" font-family="sans-serif" font-size="14">Agent runtime</text><text x="616" y="172" fill="#8bbab7" font-family="monospace" font-size="10">CODEX · CLAUDE · GEMINI · PI</text>
+              <rect x="594" y="223" width="274" height="86" rx="2" fill="#102b35" stroke="#50e6d0" stroke-opacity=".4"/><text x="616" y="256" fill="#edf7ff" font-family="sans-serif" font-size="14">guest_helper.py</text><text x="616" y="282" fill="#8bbab7" font-family="monospace" font-size="10">ON-DEMAND · NO LISTENER</text>
+              <rect x="594" y="333" width="274" height="62" rx="2" fill="#102b35" stroke="#50e6d0" stroke-opacity=".4"/><text x="616" y="371" fill="#edf7ff" font-family="sans-serif" font-size="14">/home/ubuntu/work</text>
+              <path d="M543 272h42" stroke="#58bdff" marker-end="url(#arrow)"/><text x="548" y="259" fill="#69859a" font-family="monospace" font-size="9">EXEC</text>
+              <path d="M273 384h73V321" fill="none" stroke="#ffc66d" stroke-opacity=".6" marker-end="url(#arrow)"/><text x="288" y="375" fill="#b28e50" font-family="monospace" font-size="9">PIPE ACL</text>
+            </svg>
+          </figure>
+          <div class="layer-list">
+            <div class="layer"><b>L-01</b><strong>App</strong><span>Accessible XAML views, MVVM commands, navigation, and dependency composition.</span></div>
+            <div class="layer"><b>L-02</b><strong>Domain</strong><span>Immutable records, resource rules, guest-path policy, operation states, and versioned contracts.</span></div>
+            <div class="layer"><b>L-03</b><strong>Application</strong><span>Setup coordination and narrow service interfaces; workflow order without process details.</span></div>
+            <div class="layer"><b>L-04</b><strong>Infrastructure</strong><span>Safe arguments, Multipass discovery, lifecycle, settings, terminals, presets, and staged transfers.</span></div>
+            <div class="layer"><b>L-05</b><strong>Setup Helper</strong><span>Separately compiled elevation surface with a fixed operation allow-list and protected named pipe.</span></div>
+            <div class="layer"><b>L-06</b><strong>Guest Helper</strong><span>Daemonless, standard-library file operations invoked per request through <code>multipass exec</code>.</span></div>
+          </div>
+        </section>
+
+        <section id="boundaries" class="reveal">
+          <p class="section-kicker">02 / Trust boundaries</p>
+          <h2>Authority stays narrow.</h2>
+          <p class="intro">The desktop process runs as the current user. Elevation is isolated, the hypervisor executable is verified, and guest inputs use structured data rather than interpolated command strings.</p>
+          <div class="boundary-grid">
+            <article class="boundary-card"><span class="number">B-01 // ELEVATION</span><h3>Current user → administrator</h3><p>An ACL-protected named pipe admits only the current user and local Administrators. The helper validates schema version and rejects anything outside its compiled operation allow-list.</p></article>
+            <article class="boundary-card"><span class="number">B-02 // PROCESS</span><h3>Application → Multipass</h3><p>Multipass must resolve from its canonical Program Files path or carry verified Canonical/Multipass version metadata. Arguments use <code>ProcessStartInfo.ArgumentList</code>, never a shell.</p></article>
+            <article class="boundary-card"><span class="number">B-03 // GUEST</span><h3>Windows host → Linux VM</h3><p>Guest file requests encode paths as component arrays. Separators, dot segments, NUL, symlink parents, special files, root escape, and stale expectations are rejected.</p></article>
+            <article class="boundary-card"><span class="number">B-04 // FILES</span><h3>Untrusted guest → host</h3><p>Transfers are staged and verified before commit. Reparse points, unsafe archives, unbounded extraction, and silent conflicts fail closed. Returned files still remain untrusted.</p></article>
+          </div>
+        </section>
+
+        <section id="lifecycle" class="reveal">
+          <p class="section-kicker">03 / Provisioning lifecycle</p>
+          <h2>A checkpointed state machine.</h2>
+          <p class="intro">The coordinator records each meaningful state. Relaunching does not guess—it re-inspects the host and selects the next safe transition.</p>
+          <div class="sequence">
+            <div class="sequence-item"><h3>Inspect prerequisites</h3><p>Confirm Windows edition, virtualization, Hyper-V, memory, disk, and a trusted Multipass installation.</p></div>
+            <div class="sequence-item"><h3>Resolve the plan</h3><p>Validate a compiled catalog image or advanced HTTPS cloud-image URL, native x64 architecture, resources, hardening, and presets.</p></div>
+            <div class="sequence-item"><h3>Render temporary policy</h3><p>Insert the chosen update, sysctl, audit, privilege, SSH, firewall, and egress controls into packaged cloud-init markers. Invalid combinations fail closed.</p></div>
+            <div class="sequence-item"><h3>Launch and attest</h3><p>Create the VM, wait for cloud-init, then verify <code>/etc/agent-sandbox/hardening.json</code> during the health check.</p></div>
+            <div class="sequence-item"><h3>Capture known-good state</h3><p>Remove temporary host material, stop the VM, create the exact <code>clean</code> snapshot, and restart.</p></div>
+            <div class="sequence-item"><h3>Install optional tooling</h3><p>Only after the baseline exists, install online agent presets with exact versions and integrity metadata. Offline policy intentionally skips this step.</p></div>
+          </div>
+        </section>
+
+        <section id="protocol" class="reveal">
+          <p class="section-kicker">04 / Guest file protocol</p>
+          <h2>Structured paths, versioned requests.</h2>
+          <p class="intro">The guest workspace protocol favors explicit components and bounded operations. Unknown schema versions fail closed, and no long-running bridge service expands the attack surface.</p>
+          <div class="code-panel">
+            <div class="code-head"><span>CONCEPTUAL REQUEST // SCHEMA V1</span><span>JSON</span></div>
+            <pre>{
+  <span class="key">"version"</span>: <span class="value">1</span>,
+  <span class="key">"operation"</span>: <span class="value">"copy_out"</span>,
+  <span class="key">"source"</span>: {
+    <span class="key">"components"</span>: [<span class="value">"project"</span>, <span class="value">"build"</span>, <span class="value">"report.json"</span>],
+    <span class="key">"expectedRevision"</span>: <span class="value">"sha256:…"</span>
+  },
+  <span class="key">"conflictPolicy"</span>: <span class="value">"fail"</span>
+}</pre>
+          </div>
+          <ul class="invariant-list">
+            <li><b>PATH COMPONENTS</b>No separators, dot segments, NUL bytes, or root escape.</li>
+            <li><b>FILESYSTEM TYPE</b>No traversal through symlinks; special files are rejected.</li>
+            <li><b>BOUNDED WORK</b>Pages, archive entries, extraction size, and operation scope are capped.</li>
+            <li><b>ATOMIC COMMIT</b>Transfers stage first; destination conflicts never silently overwrite.</li>
+          </ul>
+        </section>
+
+        <section id="security" class="reveal">
+          <p class="section-kicker">05 / Security invariants</p>
+          <h2>Fail closed at every seam.</h2>
+          <p class="intro">These are implementation constraints, not marketing promises. The project threat model is explicit about both protected flows and non-goals.</p>
+          <ul class="invariant-list">
+            <li><b>EXACT TARGETS</b>Lifecycle and recovery act only on VMs created by the app; legacy import accepts exactly <code>agent-dev</code>.</li>
+            <li><b>NO SHELL STRINGS</b>User-controlled paths and instance names are passed as distinct process arguments.</li>
+            <li><b>NO HOST SECRETS</b>Agent authentication occurs inside the VM; host credential forwarding is out of scope.</li>
+            <li><b>NETWORK BASELINE</b>Every new VM denies unsolicited inbound traffic and root/password SSH login.</li>
+            <li><b>LOCAL DATA</b>Settings and redacted operation logs stay local; there is no telemetry or silent updater.</li>
+            <li><b>HONEST BOUNDARY</b>This is a development isolation boundary—not hostile multi-tenant or malware-analysis containment.</li>
+          </ul>
+          <div class="actions"><a class="button" href="https://github.com/TannerMidd/agent-sandbox/blob/main/docs/THREAT-MODEL.md">Full threat model ↗</a><a class="button" href="https://github.com/TannerMidd/agent-sandbox/blob/main/docs/PRIVACY.md">Privacy &amp; system changes ↗</a></div>
+        </section>
+
+        <section id="stack" class="reveal">
+          <p class="section-kicker">06 / Stack &amp; verification</p>
+          <h2>Typed where it matters.</h2>
+          <p class="intro">The production application is C#/.NET—not a PowerShell GUI. Legacy scripts remain non-authoritative and are neither elevated nor invoked by release builds.</p>
+          <table class="stack-table">
+            <thead><tr><th>Surface</th><th>Implementation</th><th>Verification</th></tr></thead>
+            <tbody>
+              <tr><td>Desktop shell</td><td>.NET 10, WinUI 3, XAML, MVVM</td><td>Strict build + UI contract suite</td></tr>
+              <tr><td>Core policy</td><td>Immutable C# records and typed state</td><td>Domain and application tests</td></tr>
+              <tr><td>Host integration</td><td>Multipass, ConPTY, JSON stores</td><td>Infrastructure tests + launch smoke test</td></tr>
+              <tr><td>Guest operations</td><td>Python 3 standard library</td><td>Unicode, path, trash, archive safety tests</td></tr>
+              <tr><td>Packaging</td><td>Self-contained x64 + WiX MSI</td><td>Payload, checksum, SBOM, attestation gates</td></tr>
+            </tbody>
+          </table>
+          <div class="cta-panel stack-cta">
+            <p class="section-kicker">Release posture</p>
+            <h3>Development preview, deliberately.</h3>
+            <p>Core workflows and automated suites are implemented. Public beta approval remains gated on broader Appium interaction coverage, accessibility testing, and the physical Windows hardware matrix.</p>
+            <div class="actions"><a class="button primary" href="https://github.com/TannerMidd/agent-sandbox/blob/main/docs/IMPLEMENTATION-STATUS.md">Review implementation status ↗</a></div>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <a class="brand" href="index.html"><svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34.7 11.5v17L20 37 5.3 28.5v-17L20 3Z" fill="none" stroke="currentColor"/><circle cx="20" cy="20" r="2.5" fill="currentColor"/></svg><span>Agent<em>Sandbox</em></span></a>
+      <div class="footer-links"><a href="index.html">Showcase</a><a href="https://github.com/TannerMidd/agent-sandbox/blob/main/docs/ARCHITECTURE.md">Architecture source</a><a href="https://github.com/TannerMidd/agent-sandbox">GitHub</a></div>
+      <span class="footer-copy">ENGINEERING BRIEF · <span data-year></span></span>
+    </div>
+  </footer>
+</body>
+</html>
