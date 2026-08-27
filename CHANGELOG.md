@@ -9,6 +9,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Added a narrow ACL-pipe elevated helper and resumable setup coordinator.
 - Added safe Multipass discovery and lifecycle operations.
 - Added user-named multi-VM creation, selection, lifecycle, files, snapshots, rebuild, and exact-target deletion.
+- Added per-VM Linux image selection for Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, Alpine 3.22, and advanced custom HTTPS cloud images with image-aware resources and cross-distro provisioning.
 - Added a daemonless Python guest helper with paged listings, text editing, trash/restore, permissions, archives, and strict path controls.
 - Added a professional dark dashboard, dual-pane file workspace, recovery, diagnostics, and settings views.
 - Added exact-version Codex, Claude Code, Gemini CLI, and Pi manifests with npm integrity metadata.

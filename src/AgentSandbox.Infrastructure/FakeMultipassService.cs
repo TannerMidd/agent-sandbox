@@ -29,7 +29,10 @@ public sealed class FakeMultipassService : IMultipassService
     public Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (sandboxes.ContainsKey(request.InstanceName)) throw new InvalidOperationException("Fake sandbox already exists.");
-        sandboxes.Add(request.InstanceName, new SandboxInfo(request.InstanceName, SandboxState.Running, request.Resources, "10.10.10.10", "24.04", DateTimeOffset.UtcNow));
+        var imageName = request.IsUserSuppliedImage
+            ? "Custom Linux image"
+            : LinuxImages.All.Single(item => item.ImageReference == request.Image).DisplayName;
+        sandboxes.Add(request.InstanceName, new SandboxInfo(request.InstanceName, SandboxState.Running, request.Resources, "10.10.10.10", imageName, DateTimeOffset.UtcNow));
         snapshots.Add(new SnapshotInfo(request.BaselineSnapshot, request.InstanceName, DateTimeOffset.UtcNow, "Clean baseline", true));
         return Task.FromResult(Result("Provision", "Ready", progress));
     }

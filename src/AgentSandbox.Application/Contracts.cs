@@ -41,6 +41,8 @@ public interface ISandboxLifecycleService
     Task<AgentSandboxSettings> ImportLegacyAsync(LegacyImportCandidate candidate, CancellationToken cancellationToken = default);
     Task<AgentSandboxSettings> SelectSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
     Task<OperationProgress> ProvisionAsync(string instanceName, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<OperationProgress> ProvisionAsync(string instanceName, string imageId, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<OperationProgress> ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<OperationProgress> DeleteSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
 }
 
@@ -88,7 +90,8 @@ public sealed record ProvisionRequest(
     string Image,
     ResourceProfile Resources,
     string CloudInitPath,
-    string BaselineSnapshot);
+    string BaselineSnapshot,
+    bool IsUserSuppliedImage = false);
 
 public sealed record LegacyImportCandidate(
     string InstanceName,

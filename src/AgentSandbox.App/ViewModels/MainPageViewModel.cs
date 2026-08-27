@@ -60,6 +60,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial InfoBarSeverity GuestConnectionSeverity { get; set; } = InfoBarSeverity.Informational;
 
     public ObservableCollection<SandboxConfiguration> Sandboxes { get; } = [];
+    public IReadOnlyList<LinuxImage> LinuxImageOptions => LinuxImages.All;
     public ObservableCollection<HostFileItem> HostEntries { get; } = [];
     public ObservableCollection<GuestFileEntry> GuestEntries { get; } = [];
     public ObservableCollection<SnapshotInfo> Snapshots { get; } = [];
@@ -214,9 +215,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         await ReloadSetupAsync();
     }
 
-    public async Task ProvisionAsync(string instanceName, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null)
+    public async Task ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null)
     {
-        var result = await services.Lifecycle.ProvisionAsync(instanceName, resources, presetIds, progress);
+        var result = await services.Lifecycle.ProvisionAsync(instanceName, imageId, customImageUrl, resources, presetIds, progress);
         await services.History.AppendAsync(result);
         OperationLabel = result.Phase;
         await ReloadSetupAsync();
@@ -248,7 +249,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         var configuration = settings.Sandboxes.Single(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
         await DeleteSandboxAsync(instanceName);
-        await ProvisionAsync(configuration.InstanceName, configuration.Resources, configuration.SelectedPresetIds);
+        await ProvisionAsync(configuration.InstanceName, configuration.ImageId, configuration.CustomImageUrl, configuration.Resources, configuration.SelectedPresetIds);
     }
 
     public async Task SavePreferencesAsync(string theme, bool reducedMotion, bool updates, bool advancedBrowsing, string? releaseRepository = null)
@@ -589,7 +590,10 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         if (!IsActiveInstance(instanceName)) return;
         SandboxStatus = sandbox?.State.ToString() ?? "Not provisioned";
         CanOperateSandbox = sandbox is not null;
-        SandboxDetail = sandbox is null ? "Complete setup to create the Ubuntu 24.04 development VM." : $"{sandbox.InstanceName} • Ubuntu {sandbox.UbuntuRelease ?? "24.04"} • {sandbox.IPv4Address ?? "No IP yet"}";
+        var configuredImage = LinuxImages.GetRequired(settings.ImageId);
+        SandboxDetail = sandbox is null
+            ? $"Complete setup to create the {configuredImage.DisplayName} development VM."
+            : $"{sandbox.InstanceName} • {sandbox.OsRelease ?? configuredImage.DisplayName} • {sandbox.IPv4Address ?? "No IP yet"}";
         await RefreshResourceUsageCoreAsync(sandbox, instanceName, resourceUsageCancellation.Token);
         if (!IsActiveInstance(instanceName)) return;
         if (sandbox is null)
@@ -625,7 +629,8 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
                 throw new InvalidOperationException($"The sandbox is {sandbox.State.ToString().ToLowerInvariant()}. Start it before connecting.");
             await services.CreateGuestFiles(settings.InstanceName).ReconcileAsync();
             GuestConnectionStatus = $"Connected to {settings.InstanceName}";
-            GuestConnectionDetail = $"Ubuntu {sandbox.UbuntuRelease ?? "24.04"} responded and /home/ubuntu/work is accessible at {sandbox.IPv4Address ?? "its Multipass address"}.";
+            var configuredImage = LinuxImages.GetRequired(settings.ImageId);
+            GuestConnectionDetail = $"{sandbox.OsRelease ?? configuredImage.DisplayName} responded and /home/ubuntu/work is accessible at {sandbox.IPv4Address ?? "its Multipass address"}.";
             GuestConnectionSeverity = InfoBarSeverity.Success;
             return true;
         }
@@ -659,7 +664,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SetupState.HyperVRequired => "Enable Hyper-V",
         SetupState.RebootRequired => "Restart Windows to continue",
         SetupState.MultipassRequired => "Install Canonical Multipass",
-        SetupState.ResourceConfiguration => "Choose sandbox resources",
+        SetupState.ResourceConfiguration => "Choose a Linux image and resources",
         SetupState.NeedsReview => "Review host compatibility",
         _ => "Finish setting up your sandbox"
     };
@@ -669,9 +674,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SetupState.HyperVRequired => "Agent Sandbox will request UAC only for the compiled Hyper-V setup operation.",
         SetupState.RebootRequired => "Setup state is saved and will resume after the restart.",
         SetupState.MultipassRequired => "An existing compatible installation is preserved. Fresh installs use a pinned, verified Canonical MSI.",
-        SetupState.ResourceConfiguration => "Review the recommended CPU, memory, and disk allocation before provisioning.",
+        SetupState.ResourceConfiguration => "Choose a Linux image and review the recommended CPU, memory, and disk allocation before provisioning.",
         SetupState.NeedsReview => "Open Diagnostics to see the exact compatibility issue and remediation.",
-        _ => "The guided setup checks prerequisites and creates an isolated Ubuntu 24.04 VM."
+        _ => "The guided setup checks prerequisites and creates an isolated Linux development VM."
     };
 
     private static string SetupAction(SetupState state) => state switch
@@ -679,7 +684,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SetupState.HyperVRequired => "Enable Hyper-V",
         SetupState.RebootRequired => "Restart Windows",
         SetupState.NeedsReview => "View diagnostics",
-        SetupState.ResourceConfiguration => "Review resources",
+        SetupState.ResourceConfiguration => "Choose image",
         SetupState.MultipassRequired => "Install Multipass",
         _ => "Continue setup"
     };

@@ -26,7 +26,7 @@ The beta is publishable only after every selected workflow below has a recorded 
 ## End-to-end workflow
 
 - Install from a GitHub Release without using a terminal.
-- Provision Ubuntu 24.04 and each exact-version preset.
+- Provision every catalog image (Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, and Alpine 3.22), one representative custom HTTPS cloud image, and each exact-version preset.
 - Authenticate each agent only inside the guest terminal.
 - Round-trip a Unicode project, edit text, rename/copy/move, trash, restore, archive, and extract.
 - Create and restore an exact snapshot.

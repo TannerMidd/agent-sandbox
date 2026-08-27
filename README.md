@@ -1,6 +1,6 @@
 # Agent Sandbox
 
-Agent Sandbox is a GUI-first Windows app for creating and managing isolated Ubuntu development VMs for coding agents. It is designed for people who want repeatable sandboxes without writing PowerShell commands.
+Agent Sandbox is a GUI-first Windows app for creating and managing isolated Linux development VMs for coding agents. It is designed for people who want repeatable sandboxes without writing PowerShell commands.
 
 ![Agent Sandbox dark dashboard](docs/assets/agent-sandbox-dashboard.png)
 
@@ -10,7 +10,7 @@ Agent Sandbox is a GUI-first Windows app for creating and managing isolated Ubun
 
 - Checks Windows 11 Pro/Enterprise, virtualization, Hyper-V, memory, disk, and Multipass.
 - Resumes setup after a reboot and preserves compatible existing Multipass installations.
-- Creates and switches between user-named Ubuntu 24.04 VMs, with a read-only import preview for the exact legacy name `agent-dev`.
+- Creates and switches between user-named Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, Alpine 3.22, and advanced custom cloud-image VMs, with a read-only import preview for the exact legacy name `agent-dev`.
 - Starts and stops the VM, opens a guest terminal, and creates or restores exact-target snapshots.
 - Provides a dual-pane host/guest file workspace with staged, verified transfers and recoverable guest trash.
 - Supports bidirectional drag/drop, queued cancellation, safe conflict handling, UTF-8 editing, permissions, archives, workspace trash/restore, and opt-in read-only system browsing.
@@ -22,9 +22,10 @@ Agent Sandbox is a GUI-first Windows app for creating and managing isolated Ubun
 
 - Windows 11 Pro or Enterprise, x64
 - Hardware virtualization and SLAT enabled in firmware
-- Administrator approval when enabling Hyper-V or installing Multipass
-- At least 30 GiB of VM disk space while leaving 10 GiB free
-- At least 4 GiB of VM memory while leaving 6 GiB for Windows
+- Administrator approval when enabling Hyper-V or installing Multipass 1.16 or newer
+- VM resources depend on the selected image; lightweight profiles can start at 1 GiB RAM and 10 GiB disk
+- At least 6 GiB of memory and 10 GiB of disk space must remain available to Windows
+- Guest architecture must match the host architecture; the current Windows/Multipass release is x64-only and does not emulate ARM64 guests
 
 Windows Home, macOS, Linux hosts, persistent host mounts, automatic storage migration, and host credential forwarding are outside the v1 boundary.
 

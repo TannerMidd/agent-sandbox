@@ -65,9 +65,13 @@ public sealed class HostPrerequisiteService(
             if (driverResult.IsSuccess) driver = driverResult.StandardOutput.Trim();
         }
 
-        var compatible = multipassPath is not null && string.Equals(driver, "hyperv", StringComparison.OrdinalIgnoreCase);
-        if (multipassPath is not null && !compatible)
+        var supportedVersion = IsSupportedMultipassVersion(multipassVersion);
+        var compatible = multipassPath is not null &&
+            string.Equals(driver, "hyperv", StringComparison.OrdinalIgnoreCase) && supportedVersion;
+        if (multipassPath is not null && !string.Equals(driver, "hyperv", StringComparison.OrdinalIgnoreCase))
             diagnostics.Add(Error("MULTIPASS_DRIVER", "Existing Multipass driver is not Hyper-V", $"Detected driver: {driver ?? "unknown"}. Agent Sandbox will not switch a driver automatically."));
+        if (multipassPath is not null && !supportedVersion)
+            diagnostics.Add(Error("MULTIPASS_VERSION", "Multipass 1.16 or newer is required", $"Detected version: {multipassVersion ?? "unknown"}. Custom Linux images on Windows require Multipass 1.16 or newer."));
 
         return new HostReadiness(
             isWindows11, supportedEdition, isX64, virtualization, hyperV, rebootPending,
@@ -113,6 +117,13 @@ public sealed class HostPrerequisiteService(
     }
 
     private static DiagnosticRecord Error(string code, string title, string detail) => new(code, title, DiagnosticSeverity.Error, detail);
+
+    public static bool IsSupportedMultipassVersion(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var match = System.Text.RegularExpressions.Regex.Match(value, @"\d+\.\d+(?:\.\d+)?", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return match.Success && Version.TryParse(match.Value, out var version) && version >= new Version(1, 16);
+    }
 
     private static string? TryReadVersion(string json)
     {

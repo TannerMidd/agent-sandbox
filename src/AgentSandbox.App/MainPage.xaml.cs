@@ -115,7 +115,7 @@ public sealed partial class MainPage : Page
     private async Task ShowHyperVSetupAsync()
     {
         var dialog = Dialog("Enable Hyper-V",
-            "Agent Sandbox uses the Windows Hyper-V platform to isolate the Ubuntu VM. This compiled, allow-listed operation requests UAC and may require a restart. Save your work first.",
+            "Agent Sandbox uses the Windows Hyper-V platform to isolate the Linux VM. This compiled, allow-listed operation requests UAC and may require a restart. Save your work first.",
             "Enable Hyper-V", "Cancel");
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         var response = await ViewModel.EnableHyperVAsync();
@@ -167,15 +167,55 @@ public sealed partial class MainPage : Page
 
         var storageRoot = Path.GetPathRoot(ViewModel.CurrentSettings.StoragePath ?? AppContext.BaseDirectory)!;
         var recommendation = ResourceProfile.Recommend(Environment.ProcessorCount, host.AvailableMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
+        var selectedImage = LinuxImages.GetRequired(ViewModel.CurrentSettings.ImageId);
+        var imageDescription = new TextBlock
+        {
+            Text = ImageDescription(selectedImage),
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.7
+        };
+        var imagePicker = new ComboBox
+        {
+            Header = "Linux image (x86_64)",
+            ItemsSource = ViewModel.LinuxImageOptions,
+            DisplayMemberPath = nameof(LinuxImage.DisplayName),
+            SelectedItem = selectedImage,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var customImageUrl = new TextBox
+        {
+            Header = "Custom cloud image URL",
+            PlaceholderText = "https://example.org/linux-cloud-image.qcow2",
+            Text = ViewModel.CurrentSettings.CustomImageUrl ?? "",
+            Visibility = selectedImage.IsUserSupplied ? Visibility.Visible : Visibility.Collapsed
+        };
+        imagePicker.SelectionChanged += (_, _) =>
+        {
+            if (imagePicker.SelectedItem is LinuxImage image)
+            {
+                imageDescription.Text = ImageDescription(image);
+                customImageUrl.Visibility = image.IsUserSupplied ? Visibility.Visible : Visibility.Collapsed;
+            }
+        };
         var name = new TextBox
         {
             Header = "VM name",
             Text = requestedName ?? ViewModel.CurrentSettings.InstanceName,
             PlaceholderText = "agent-sandbox-project"
         };
-        var cpu = Number("Virtual CPUs", recommendation.CpuCount, 2, 8);
-        var memory = Number("Memory (GiB)", recommendation.MemoryGiB, 4, 16);
-        var disk = Number("Disk (GiB)", recommendation.DiskGiB, 30, 2048);
+        var cpu = Number("Virtual CPUs", Math.Clamp(selectedImage.RecommendedResources.CpuCount, selectedImage.MinimumResources.CpuCount, recommendation.CpuCount), selectedImage.MinimumResources.CpuCount, 8);
+        var memory = Number("Memory (GiB)", Math.Clamp(selectedImage.RecommendedResources.MemoryGiB, selectedImage.MinimumResources.MemoryGiB, recommendation.MemoryGiB), selectedImage.MinimumResources.MemoryGiB, 16);
+        var disk = Number("Disk (GiB)", Math.Clamp(selectedImage.RecommendedResources.DiskGiB, selectedImage.MinimumResources.DiskGiB, recommendation.DiskGiB), selectedImage.MinimumResources.DiskGiB, 2048);
+        imagePicker.SelectionChanged += (_, _) =>
+        {
+            if (imagePicker.SelectedItem is not LinuxImage image) return;
+            cpu.Minimum = image.MinimumResources.CpuCount;
+            memory.Minimum = image.MinimumResources.MemoryGiB;
+            disk.Minimum = image.MinimumResources.DiskGiB;
+            cpu.Value = Math.Clamp(image.RecommendedResources.CpuCount, image.MinimumResources.CpuCount, recommendation.CpuCount);
+            memory.Value = Math.Clamp(image.RecommendedResources.MemoryGiB, image.MinimumResources.MemoryGiB, recommendation.MemoryGiB);
+            disk.Value = Math.Clamp(image.RecommendedResources.DiskGiB, image.MinimumResources.DiskGiB, recommendation.DiskGiB);
+        };
         var presetPanel = new StackPanel { Spacing = 6 };
         var presetChecks = new List<CheckBox>();
         foreach (var preset in ViewModel.Presets)
@@ -186,6 +226,9 @@ public sealed partial class MainPage : Page
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = "Development boundary", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "The VM isolates development tools from normal Windows work, but it is not a hardened hostile-code boundary. Agent credentials are entered only inside the guest terminal; host credential stores are never copied.", TextWrapping = TextWrapping.Wrap, Opacity = 0.75 });
+        panel.Children.Add(imagePicker);
+        panel.Children.Add(imageDescription);
+        panel.Children.Add(customImageUrl);
         panel.Children.Add(name);
         var resources = new Grid { ColumnSpacing = 10 };
         resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition());
@@ -194,7 +237,13 @@ public sealed partial class MainPage : Page
         panel.Children.Add(new TextBlock { Text = "Optional pinned agent presets", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(presetPanel);
 
-        var dialog = Dialog(requestedName is null ? "Create your agent sandbox" : "Create another sandbox", panel, "Provision Ubuntu 24.04", "Cancel");
+        var setupContent = new ScrollViewer
+        {
+            Content = panel,
+            MaxHeight = 620,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        var dialog = Dialog(requestedName is null ? "Create your agent sandbox" : "Create another sandbox", setupContent, "Create VM", "Cancel");
         if (legacy is not null)
         {
             dialog.SecondaryButtonText = "Import agent-dev";
@@ -203,14 +252,17 @@ public sealed partial class MainPage : Page
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Secondary && legacy is not null) { await ViewModel.ImportLegacyAsync(legacy); SelectCurrentSandboxInPicker(); return; }
         if (result != ContentDialogResult.Primary) return;
+        selectedImage = imagePicker.SelectedItem as LinuxImage
+            ?? throw new InvalidOperationException("Choose a Linux image before creating the VM.");
         var profile = new ResourceProfile((int)cpu.Value, (int)memory.Value, (int)disk.Value);
-        var errors = profile.Validate(Environment.ProcessorCount, host.TotalMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
+        var errors = profile.Validate(Environment.ProcessorCount, host.TotalMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace, selectedImage.MinimumResources);
         if (errors.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
         var selected = presetChecks.Where(item => item.IsChecked == true).Select(item => (string)item.Tag).ToArray();
         var progress = new Progress<OperationProgress>(item => ViewModel.OperationLabel = item.Percent is null ? item.Phase : $"{item.Phase} • {item.Percent}%");
-        await ViewModel.ProvisionAsync(name.Text.Trim(), profile, selected, progress);
+        var customUrl = selectedImage.IsUserSupplied ? customImageUrl.Text.Trim() : null;
+        await ViewModel.ProvisionAsync(name.Text.Trim(), selectedImage.Id, customUrl, profile, selected, progress);
         SelectCurrentSandboxInPicker();
-        await MessageAsync("Agent Sandbox is ready", $"{name.Text.Trim()} passed its health checks, created the clean snapshot, and installed your selected presets.");
+        await MessageAsync("Agent Sandbox is ready", $"{name.Text.Trim()} ({selectedImage.DisplayName}) passed its health checks, created the clean snapshot, and installed your selected presets.");
     }
 
     private async Task ShowLegacyImportAsync(LegacyImportCandidate legacy)
@@ -598,6 +650,8 @@ public sealed partial class MainPage : Page
         return edited.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Replace("\n", newline, StringComparison.Ordinal);
     }
     private static NumberBox Number(string header, double value, double minimum, double maximum) => new() { Header = header, Value = value, Minimum = minimum, Maximum = maximum, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+    private static string ImageDescription(LinuxImage image) =>
+        $"{image.Description}{(image.IsCustomImage && !image.IsUserSupplied ? " Multipass downloads this image from the distribution's official host when the VM is created." : "")} Recommended: {image.RecommendedResources.CpuCount} vCPU, {image.RecommendedResources.MemoryGiB} GiB memory, {image.RecommendedResources.DiskGiB} GiB disk.";
 
     private ContentDialog Dialog(string title, object content, string? primary, string close)
     {

@@ -31,6 +31,6 @@ Guest file requests use path component arrays. The guest helper rejects separato
 
 ## Lifecycle
 
-The setup coordinator persists a state after each meaningful step. On relaunch it re-inspects the host, then selects the next safe state. Provisioning creates Ubuntu 24.04, waits for cloud-init, runs health checks, stops the VM, creates `clean`, and starts it again before installing selected presets.
+The setup coordinator persists a state after each meaningful step. On relaunch it re-inspects the host, then selects the next safe state. Provisioning resolves a user-selected image from the compiled catalog (Ubuntu, Debian, Arch, Fedora, or Alpine) or validates an advanced custom HTTPS cloud-image URL, waits for apt/apk/dnf/pacman-aware cloud-init, runs health checks, stops the VM, creates `clean`, and starts it again before installing selected presets. The image ID and any custom URL are stored with each managed VM so rebuilds use the same source. Multipass requires native guest architecture, and the current Windows release remains x64-only.
 
 The app stores the VMs it creates and manages only those instances. Users choose a unique Multipass name for each VM and can switch the active target; import is allowed only for the exact existing `agent-dev` name and never renames or migrates it.

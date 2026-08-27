@@ -17,13 +17,17 @@
           "instanceName": { "type": "string", "pattern": "^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" },
           "resources": { "$ref": "#/$defs/resources" },
           "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
-          "importedLegacyInstance": { "type": "boolean" }
+          "importedLegacyInstance": { "type": "boolean" },
+          "imageId": { "$ref": "#/$defs/imageId" },
+          "customImageUrl": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 }
         },
         "additionalProperties": false
       }
     },
     "setupState": { "type": "string" },
     "resources": { "$ref": "#/$defs/resources" },
+    "imageId": { "$ref": "#/$defs/imageId" },
+    "customImageUrl": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
     "storagePath": { "type": ["string", "null"] },
     "theme": { "enum": ["System", "Dark", "Light"] },
     "reducedMotion": { "type": "boolean" },
@@ -34,13 +38,14 @@
     "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
   },
   "$defs": {
+    "imageId": { "enum": ["ubuntu-24.04", "ubuntu-22.04", "debian-13", "arch-linux", "fedora-44", "alpine-3.22", "custom"] },
     "resources": {
       "type": "object",
       "required": ["cpuCount", "memoryGiB", "diskGiB"],
       "properties": {
-        "cpuCount": { "type": "integer", "minimum": 2, "maximum": 8 },
-        "memoryGiB": { "type": "integer", "minimum": 4, "maximum": 16 },
-        "diskGiB": { "type": "integer", "minimum": 30 }
+        "cpuCount": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "memoryGiB": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "diskGiB": { "type": "integer", "minimum": 10 }
       },
       "additionalProperties": false
     }

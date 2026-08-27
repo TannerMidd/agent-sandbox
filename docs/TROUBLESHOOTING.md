@@ -6,11 +6,11 @@ Open Agent Sandbox again. Setup state is persisted in `%LocalAppData%\AgentSandb
 
 ## Existing Multipass is reported incompatible
 
-Agent Sandbox requires the Hyper-V driver. It will not switch an existing driver or migrate storage automatically. Existing instances must be handled outside Agent Sandbox before a deliberate driver change.
+Agent Sandbox requires the Hyper-V driver and Multipass 1.16 or newer (the first Windows release with custom-image launch support). It will not switch an existing driver, replace an older installation, or migrate storage automatically. Existing instances must be handled outside Agent Sandbox before a deliberate driver or version change.
 
 ## Provisioning failed
 
-Export Diagnostics and review the cloud-init and Multipass records. Partial provisioning is not overwritten automatically. Repair or remove the exact failed instance before retrying.
+Export Diagnostics and review the cloud-init and Multipass records. Non-Ubuntu images require access to their official HTTPS image and package hosts. Custom images must be x86_64, provide cloud-init and SSH, expose a UID 1000 default user, and use apt, apk, dnf, or pacman. Partial provisioning is not overwritten automatically. Repair or remove the exact failed instance before retrying.
 
 ## File transfer was interrupted
 
