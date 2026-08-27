@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "codex",
+  "displayName": "OpenAI Codex CLI",
+  "version": "0.149.1",
+  "executable": "codex",
+  "minimumRuntime": "node>=20",
+  "authenticationHint": "Run codex in the guest terminal and sign in there. Host credentials are never copied.",
+  "lastVerified": "2026-08-26",
+  "artifacts": [{
+    "platform": "linux",
+    "architecture": "x64",
+    "source": "npm:@openai/codex@0.149.1",
+    "integrity": "sha512-6q5pbcpFbJbqOpkubSDBwXmktQ55aD8eUzGzBF1zASob2DjwhBKDSNGtdZKalfrNJUdTDTPDMmzCXEXs5tMBYA==",
+    "installKind": "npm"
+  }]
+}

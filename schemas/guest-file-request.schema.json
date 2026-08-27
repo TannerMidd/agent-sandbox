@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-sandbox.dev/schemas/guest-file-request.v1.json",
+  "title": "Agent Sandbox guest file request v1",
+  "type": "object",
+  "required": ["v", "id", "op", "rootId", "relativePath"],
+  "properties": {
+    "v": { "const": 1 },
+    "id": { "type": "string", "format": "uuid" },
+    "op": { "enum": ["list", "stat", "search", "upload", "download", "mkdir", "createFile", "rename", "copy", "move", "trash", "restore", "purge", "readText", "writeText", "chmod", "archive", "extract"] },
+    "rootId": { "enum": ["work", "system"] },
+    "relativePath": { "$ref": "#/$defs/path" },
+    "destinationPath": { "$ref": "#/$defs/path" },
+    "pageSize": { "type": "integer", "minimum": 1, "maximum": 200 },
+    "cursor": { "type": ["string", "null"] },
+    "conflict": { "enum": ["fail", "overwrite", "rename"] },
+    "content": { "type": ["string", "null"] },
+    "mode": { "type": ["integer", "null"], "minimum": 0, "maximum": 511 }
+  },
+  "$defs": {
+    "path": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "pattern": "^(?!\\.{1,2}$)[^/\\\\\\u0000]+$" }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-sandbox.dev/schemas/setup-helper-request.v1.json",
+  "title": "Agent Sandbox setup-helper request v1",
+  "type": "object",
+  "required": ["version", "requestId", "operation"],
+  "properties": {
+    "version": { "const": 1 },
+    "requestId": { "type": "string", "format": "uuid" },
+    "operation": { "enum": ["inspectHost", "enableHyperV", "installMultipass", "configureFreshStorage"] },
+    "storagePath": { "type": ["string", "null"] },
+    "installerPath": { "type": ["string", "null"] },
+    "expectedSha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+    "expectedPublisher": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

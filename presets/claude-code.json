@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "claude-code",
+  "displayName": "Claude Code",
+  "version": "2.1.241",
+  "executable": "claude",
+  "minimumRuntime": "node>=20",
+  "authenticationHint": "Run claude in the guest terminal and authenticate there.",
+  "lastVerified": "2026-08-26",
+  "artifacts": [{
+    "platform": "linux",
+    "architecture": "x64",
+    "source": "npm:@anthropic-ai/claude-code@2.1.241",
+    "integrity": "sha512-S7DWEmJJAsI5taAUjhKm6soXcFJYIVeTH6Lg9kmp3yntFllCP612hGwZ7thOGh8r7YaRUH9+1jCX5A9QGazsxg==",
+    "installKind": "npm"
+  }]
+}

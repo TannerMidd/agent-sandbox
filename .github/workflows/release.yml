@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore and test
+        run: |
+          dotnet restore AgentSandbox.slnx --configfile NuGet.Config
+          dotnet test tests/AgentSandbox.Domain.Tests/AgentSandbox.Domain.Tests.csproj --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --no-restore -p:CI=true
+          python tests/guest_helper_tests.py
+      - name: Publish x64 app and helper
+        run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:PublishDir=${{ github.workspace }}\artifacts\publish\
+      - name: Build unsigned installer
+        run: dotnet build installer/AgentSandbox.Installer.wixproj -c Release -p:PublishDir=${{ github.workspace }}\artifacts\publish
+      - name: Create diagnostic archive and checksums
+        shell: pwsh
+        run: |
+          Compress-Archive -Path artifacts\publish\* -DestinationPath artifacts\AgentSandbox-portable-diagnostics-x64.zip
+          Copy-Item installer\bin\x64\Release\AgentSandbox-x64.msi artifacts\AgentSandbox-x64-unsigned.msi
+          Get-ChildItem artifacts\AgentSandbox-* -File | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)" | Set-Content -NoNewline -LiteralPath "$($_.FullName).sha256"
+          }
+      - name: Generate SPDX SBOM
+        run: |
+          dotnet tool install --global Microsoft.Sbom.DotNetTool
+          sbom-tool generate -b artifacts -bc . -pn AgentSandbox -pv ${{ github.ref_name }} -ps AgentSandbox -nsb https://github.com/${{ github.repository }}
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            artifacts/AgentSandbox-x64-unsigned.msi
+            artifacts/AgentSandbox-portable-diagnostics-x64.zip
+      - name: Publish immutable GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          immutableCreate: true
+          generate_release_notes: true
+          prerelease: true
+          body: |
+            Windows x64 public beta. The installer is unsigned and may trigger SmartScreen.
+            Verify the attached SHA-256 files and GitHub artifact attestations before running it.
+          files: |
+            artifacts/AgentSandbox-x64-unsigned.msi
+            artifacts/AgentSandbox-x64-unsigned.msi.sha256
+            artifacts/AgentSandbox-portable-diagnostics-x64.zip
+            artifacts/AgentSandbox-portable-diagnostics-x64.zip.sha256
+            artifacts/_manifest/spdx_2.2/manifest.spdx.json

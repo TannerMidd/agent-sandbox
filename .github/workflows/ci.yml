@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore
+        run: dotnet restore AgentSandbox.slnx --configfile NuGet.Config
+      - name: Build application
+        run: dotnet build src/AgentSandbox.App/AgentSandbox.App.csproj --configuration Release --no-restore -p:Platform=x64 -p:CI=true
+      - name: Build setup helper
+        run: dotnet build src/AgentSandbox.SetupHelper/AgentSandbox.SetupHelper.csproj --configuration Release --no-restore -p:Platform=x64 -p:CI=true
+      - name: Test .NET
+        run: |
+          dotnet test tests/AgentSandbox.Domain.Tests/AgentSandbox.Domain.Tests.csproj --configuration Release --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj --configuration Release --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj --configuration Release --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --configuration Release --no-restore -p:CI=true
+      - name: Test guest helper
+        run: python tests/guest_helper_tests.py
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-sandbox-ci-x64
+          path: src/AgentSandbox.App/bin/x64/Release/**
+          if-no-files-found: error

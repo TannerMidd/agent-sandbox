@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentSandbox.App/AgentSandbox.App.csproj" />
+    <Project Path="src/AgentSandbox.Application/AgentSandbox.Application.csproj" />
+    <Project Path="src/AgentSandbox.Domain/AgentSandbox.Domain.csproj" />
+    <Project Path="src/AgentSandbox.Infrastructure/AgentSandbox.Infrastructure.csproj" />
+    <Project Path="src/AgentSandbox.SetupHelper/AgentSandbox.SetupHelper.csproj" />
+  </Folder>
+  <Folder Name="/installer/">
+    <Project Path="installer/AgentSandbox.Installer.wixproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj" />
+    <Project Path="tests/AgentSandbox.Domain.Tests/AgentSandbox.Domain.Tests.csproj" />
+    <Project Path="tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj" />
+    <Project Path="tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj" />
+  </Folder>
+</Solution>

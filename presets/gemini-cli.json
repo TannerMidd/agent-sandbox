@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "gemini-cli",
+  "displayName": "Gemini CLI",
+  "version": "0.56.0",
+  "executable": "gemini",
+  "minimumRuntime": "node>=20",
+  "authenticationHint": "Run gemini in the guest terminal and sign in with your Google account there.",
+  "lastVerified": "2026-08-26",
+  "artifacts": [{
+    "platform": "linux",
+    "architecture": "x64",
+    "source": "npm:@google/gemini-cli@0.56.0",
+    "integrity": "sha512-q4oBfb/Oh/HNLMYBOJMp88/QQ8hLffnB0ykoVThi6A5isbGHJ/ylWLMosMGqukKY0Q1Jv/XRDpb46Q1BV+zQqw==",
+    "installKind": "npm"
+  }]
+}

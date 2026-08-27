@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "AgentSandbox.App (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "AgentSandbox.App (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

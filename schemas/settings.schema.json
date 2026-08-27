@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-sandbox.dev/schemas/settings.v1.json",
+  "title": "Agent Sandbox settings v1",
+  "type": "object",
+  "required": ["schemaVersion", "instanceName", "setupState", "resources"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "instanceName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,62}$" },
+    "importedLegacyInstance": { "type": "boolean" },
+    "setupState": { "type": "string" },
+    "resources": {
+      "type": "object",
+      "required": ["cpuCount", "memoryGiB", "diskGiB"],
+      "properties": {
+        "cpuCount": { "type": "integer", "minimum": 2, "maximum": 8 },
+        "memoryGiB": { "type": "integer", "minimum": 4, "maximum": 16 },
+        "diskGiB": { "type": "integer", "minimum": 30 }
+      },
+      "additionalProperties": false
+    },
+    "storagePath": { "type": ["string", "null"] },
+    "theme": { "enum": ["System", "Dark", "Light"] },
+    "reducedMotion": { "type": "boolean" },
+    "advancedGuestBrowsing": { "type": "boolean" },
+    "checkForUpdates": { "type": "boolean" },
+    "lastUpdateCheck": { "type": ["string", "null"], "format": "date-time" },
+    "releaseRepository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

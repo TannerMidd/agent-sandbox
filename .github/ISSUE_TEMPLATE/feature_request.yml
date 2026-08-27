@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement inside the supported product boundary
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem to solve }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: Proposed experience }
+    validations: { required: true }
+  - type: textarea
+    id: safety
+    attributes: { label: Safety and compatibility considerations }

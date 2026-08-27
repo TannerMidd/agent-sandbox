@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible Agent Sandbox problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials or private logs. Report security issues through private vulnerability reporting.
+  - type: input
+    id: version
+    attributes: { label: Version, placeholder: v0.1.0-beta.1 }
+    validations: { required: true }
+  - type: dropdown
+    id: host
+    attributes: { label: Windows edition, options: [Windows 11 Pro, Windows 11 Enterprise] }
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes: { label: Reproduction steps }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected and actual behavior }
+    validations: { required: true }

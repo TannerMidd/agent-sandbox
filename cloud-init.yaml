@@ -1,0 +1,51 @@
+#cloud-config
+
+package_update: true
+package_upgrade: false
+package_reboot_if_required: false
+ssh_pwauth: false
+
+packages:
+  - build-essential
+  - ca-certificates
+  - curl
+  - docker.io
+  - fd-find
+  - git
+  - git-lfs
+  - jq
+  - pipx
+  - python3
+  - python3-pip
+  - python3-venv
+  - ripgrep
+  - shellcheck
+  - tmux
+  - unzip
+  - xz-utils
+  - zip
+  - ufw
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-agent-dev-hardening.conf
+    owner: root:root
+    permissions: '0o644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PermitEmptyPasswords no
+
+runcmd:
+  - [bash, -lc, 'set -euo pipefail; curl --fail --location --proto =https --tlsv1.2 https://nodejs.org/download/release/v22.23.2/node-v22.23.2-linux-x64.tar.xz -o /tmp/node-v22.23.2-linux-x64.tar.xz; echo "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307  /tmp/node-v22.23.2-linux-x64.tar.xz" | sha256sum --check --strict; install -d -m 0755 /opt/node-v22.23.2; tar -xJf /tmp/node-v22.23.2-linux-x64.tar.xz --strip-components=1 -C /opt/node-v22.23.2; ln -sfn /opt/node-v22.23.2/bin/node /usr/local/bin/node; ln -sfn /opt/node-v22.23.2/bin/npm /usr/local/bin/npm; ln -sfn /opt/node-v22.23.2/bin/npx /usr/local/bin/npx; ln -sfn /opt/node-v22.23.2/bin/corepack /usr/local/bin/corepack; rm -f /tmp/node-v22.23.2-linux-x64.tar.xz; node --version']
+  - [bash, -lc, 'set -eu; if apt-cache show docker-compose-v2 >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2; fi']
+  - [bash, -lc, 'git lfs install --system']
+  - [mkdir, -p, /home/ubuntu/work]
+  - [chown, ubuntu:ubuntu, /home/ubuntu/work]
+  - [usermod, -aG, docker, ubuntu]
+  - [systemctl, enable, --now, docker]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, allow, OpenSSH]
+  - [ufw, --force, enable]
+  - [bash, -lc, 'sshd -t && systemctl reload ssh']

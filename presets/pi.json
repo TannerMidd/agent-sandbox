@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "pi",
+  "displayName": "Pi Coding Agent",
+  "version": "0.73.1",
+  "executable": "pi",
+  "minimumRuntime": "node>=20",
+  "authenticationHint": "Run pi, then use /login inside the guest terminal.",
+  "lastVerified": "2026-08-26",
+  "artifacts": [{
+    "platform": "linux",
+    "architecture": "x64",
+    "source": "npm:@mariozechner/pi-coding-agent@0.73.1",
+    "integrity": "sha512-gXQh3SaZmWTfVMc4Ao5+LGbVeKvzyO7tolok0nLsZgq9nGjZx/EEU3NM8C+qUnB4Nvs2rswG5qOVgLzQkq0fHQ==",
+    "installKind": "npm"
+  }]
+}

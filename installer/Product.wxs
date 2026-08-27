@@ -1,0 +1,33 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Agent Sandbox"
+    Manufacturer="Agent Sandbox contributors"
+    Version="0.1.0"
+    UpgradeCode="7B15B70C-785B-4BC1-96B5-186672C47A79"
+    Language="1033"
+    Scope="perMachine">
+    <SummaryInformation Description="Agent Sandbox public beta (unsigned)" Manufacturer="Agent Sandbox contributors" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Agent Sandbox is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Agent Sandbox">
+        <Component Id="MainExecutable" Guid="AC578D85-131F-4775-A36E-C8D51AA2D737">
+          <File Id="MainExe" Source="$(var.PublishDir)\AgentSandbox.App.exe" KeyPath="yes">
+            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Agent Sandbox"
+                      Description="Open Agent Sandbox" WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+          </File>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="MainFeature" Title="Agent Sandbox" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <Files Directory="INSTALLFOLDER" Include="$(var.PublishDir)\**">
+        <Exclude Files="$(var.PublishDir)\AgentSandbox.App.exe" />
+        <Exclude Files="$(var.PublishDir)\**\*.pdb" />
+      </Files>
+    </Feature>
+  </Package>
+</Wix>
