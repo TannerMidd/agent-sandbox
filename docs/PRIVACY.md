@@ -9,13 +9,13 @@ With explicit consent, the app may:
 - Enable the Windows Hyper-V optional feature and request a reboot.
 - Install a pinned Canonical Multipass MSI.
 - Create a fresh local NTFS Multipass storage directory and machine environment setting.
-- Create and operate one Ubuntu 24.04 Multipass VM.
+- Create and operate one or more user-selected Linux Multipass VMs (Ubuntu, Debian, Arch, Fedora, Alpine, or an explicitly supplied custom HTTPS cloud image).
 
 The app preserves a compatible existing Multipass installation, storage path, driver, instances, and snapshots. It never changes driver or migrates storage when instances exist.
 
 ## Network access
 
-Windows may access Canonical to obtain the pinned Multipass installer and GitHub Releases at most once daily when update checks are enabled. The VM accesses Ubuntu package mirrors and npm while provisioning selected presets. Agent CLIs access their own providers only when the user runs and authenticates them inside the guest.
+Windows may access Canonical to obtain the pinned Multipass installer and GitHub Releases at most once daily when update checks are enabled. Multipass obtains the selected image from Canonical or the selected distribution host; for a custom image it contacts the exact HTTPS host entered by the user. The VM accesses its distribution package mirrors, Node.js (for apt-based images), and npm while provisioning selected presets. Agent CLIs access their own providers only when the user runs and authenticates them inside the guest.
 
 ## Credentials
 

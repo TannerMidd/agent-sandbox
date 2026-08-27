@@ -145,6 +145,45 @@ public sealed class SetupCoordinatorTests
     }
 
     [Fact]
+    public async Task SelectedLinuxImageIsProvisionedAndPersisted()
+    {
+        var store = new MemorySettings();
+        var multipass = new FakeMultipass();
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+
+        var result = await coordinator.ProvisionAsync("agent-sandbox-alpine", "alpine-3.22", new ResourceProfile(1, 1, 10), []);
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(OperationState.Succeeded, result.State);
+        Assert.Equal(LinuxImages.GetRequired("alpine-3.22").ImageReference, multipass.LastProvisionRequest?.Image);
+        Assert.Equal("alpine-3.22", settings.ImageId);
+        Assert.Equal("alpine-3.22", Assert.Single(settings.Sandboxes).ImageId);
+    }
+
+    [Fact]
+    public async Task CustomCloudImageIsValidatedAndPersisted()
+    {
+        const string imageUrl = "https://images.example.org/team/cloud-image.qcow2";
+        var store = new MemorySettings();
+        var multipass = new FakeMultipass();
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+
+        await coordinator.ProvisionAsync("agent-sandbox-custom", LinuxImages.CustomId, imageUrl, new ResourceProfile(2, 2, 20), []);
+        var settings = await store.LoadAsync();
+
+        Assert.True(multipass.LastProvisionRequest?.IsUserSuppliedImage);
+        Assert.Equal(imageUrl, settings.CustomImageUrl);
+        Assert.Equal(imageUrl, Assert.Single(settings.Sandboxes).CustomImageUrl);
+    }
+
+    [Fact]
+    public async Task UnknownLinuxImageIsRejectedBeforeProvisioning()
+    {
+        var coordinator = new SetupCoordinator(new MemorySettings(), new FakePrerequisites(), new FakeMultipass(), new FakePresets(), freeDiskBytes: _ => 100L << 30);
+        await Assert.ThrowsAsync<ArgumentException>(() => coordinator.ProvisionAsync("agent-sandbox-unknown", "unknown", new ResourceProfile(2, 4, 30), []));
+    }
+
+    [Fact]
     public async Task PartialProvisioningIsManagedButRequiresReview()
     {
         var store = new MemorySettings();
@@ -284,6 +323,7 @@ public sealed class SetupCoordinatorTests
     {
         private readonly Dictionary<string, SandboxInfo> sandboxes = initial.ToDictionary(item => item.InstanceName, StringComparer.Ordinal);
         public OperationProgress ProvisionResult { get; init; } = Result(OperationState.Succeeded, "Ready");
+        public ProvisionRequest? LastProvisionRequest { get; private set; }
         public Task<SandboxInfo?> GetSandboxAsync(string instanceName, CancellationToken cancellationToken = default) =>
             Task.FromResult(sandboxes.GetValueOrDefault(instanceName));
         public Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default) =>
@@ -294,8 +334,14 @@ public sealed class SetupCoordinatorTests
         public Task<OperationProgress> StopAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)
         {
+            LastProvisionRequest = request;
             if (ProvisionResult.State is OperationState.Succeeded or OperationState.CleanupPending)
-                sandboxes.Add(request.InstanceName, new SandboxInfo(request.InstanceName, SandboxState.Running, request.Resources, "10.0.0.4", "24.04", DateTimeOffset.UtcNow));
+            {
+                var imageName = request.IsUserSuppliedImage
+                    ? "Custom Linux image"
+                    : LinuxImages.All.Single(image => image.ImageReference == request.Image).DisplayName;
+                sandboxes.Add(request.InstanceName, new SandboxInfo(request.InstanceName, SandboxState.Running, request.Resources, "10.0.0.4", imageName, DateTimeOffset.UtcNow));
+            }
             return Task.FromResult(ProvisionResult);
         }
         public Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(string instanceName, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SnapshotInfo>>([]);

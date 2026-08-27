@@ -23,12 +23,13 @@ public sealed class InfrastructureTests
             var expected = new AgentSandboxSettings
             {
                 InstanceName = "agent-sandbox-two",
+                ImageId = "alpine-3.22",
                 Theme = "Dark",
                 SetupState = SetupState.Ready,
                 Sandboxes =
                 [
                     new SandboxConfiguration("agent-sandbox-one", new ResourceProfile(2, 4, 30), []),
-                    new SandboxConfiguration("agent-sandbox-two", new ResourceProfile(4, 8, 50), ["codex"])
+                    new SandboxConfiguration("agent-sandbox-two", new ResourceProfile(4, 8, 50), ["codex"], ImageId: "alpine-3.22")
                 ]
             };
             await store.SaveAsync(expected);
@@ -36,10 +37,27 @@ public sealed class InfrastructureTests
             Assert.Equal(expected.InstanceName, actual.InstanceName);
             Assert.Equal(expected.Theme, actual.Theme);
             Assert.Equal(expected.SetupState, actual.SetupState);
+            Assert.Equal("alpine-3.22", actual.ImageId);
+            Assert.Equal("alpine-3.22", actual.Sandboxes[1].ImageId);
             Assert.Equal(expected.Resources, actual.Resources);
             Assert.Equal(expected.SelectedPresetIds, actual.SelectedPresetIds);
             Assert.Equal(expected.Sandboxes, actual.Sandboxes);
             Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ExistingSettingsWithoutImageSelectionUseUbuntuDefault()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "settings.json");
+            await File.WriteAllTextAsync(path, "{\"schemaVersion\":1,\"instanceName\":\"agent-sandbox-old\",\"sandboxes\":[],\"setupState\":0,\"resources\":{\"cpuCount\":2,\"memoryGiB\":4,\"diskGiB\":30}}");
+            var settings = await new JsonSettingsStore(path).LoadAsync();
+            Assert.Equal(LinuxImages.DefaultId, settings.ImageId);
         }
         finally { Directory.Delete(directory, recursive: true); }
     }
@@ -81,6 +99,7 @@ public sealed class InfrastructureTests
 
         Assert.Equal("agent-dev", sandbox.InstanceName);
         Assert.Equal(SandboxState.Stopped, sandbox.State);
+        Assert.Equal("Ubuntu 24.04 LTS", sandbox.OsRelease);
         Assert.Null(sandbox.IPv4Address);
     }
 
@@ -125,6 +144,38 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
+    public async Task ProvisioningRejectsImageReferencesOutsideTheCatalog()
+    {
+        var service = new MultipassService(new ScriptedRunner(), new FixedLocator());
+        var request = new ProvisionRequest("agent-sandbox", "https://example.invalid/untrusted.qcow2", new ResourceProfile(2, 4, 30), "cloud-init.yaml", "clean");
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ProvisionAsync(request));
+    }
+
+    [Fact]
+    public async Task UserSuppliedHttpsImagePassesCatalogBoundary()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var cloudInit = Path.Combine(directory, "cloud-init.yaml");
+        await File.WriteAllTextAsync(cloudInit, "#cloud-config");
+        try
+        {
+            var runner = new ScriptedRunner(
+                new ProcessResult(0, "{\"list\":[]}", ""),
+                new ProcessResult(1, "", "download stopped"),
+                new ProcessResult(0, "{\"list\":[]}", ""));
+            var service = new MultipassService(runner, new FixedLocator());
+            var request = new ProvisionRequest("agent-custom", "https://images.example.org/linux.qcow2", new ResourceProfile(2, 2, 20), cloudInit, "clean", true);
+
+            var result = await service.ProvisionAsync(request);
+
+            Assert.Equal(OperationState.Failed, result.State);
+            Assert.Equal("https://images.example.org/linux.qcow2", runner.Calls[1][1]);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public async Task PartialProvisioningIsReportedForRecovery()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
@@ -152,6 +203,14 @@ public sealed class InfrastructureTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ProcessRunner().RunAsync(
             "powershell.exe", ["-NoProfile", "-Command", "Start-Sleep -Seconds 30"], timeout: TimeSpan.FromMilliseconds(200)));
     }
+
+    [Theory]
+    [InlineData("1.16.0", true)]
+    [InlineData("multipass 1.16.3+win", true)]
+    [InlineData("1.15.1", false)]
+    [InlineData("unknown", false)]
+    public void MultipassVersionRequiresCustomImageSupport(string version, bool expected) =>
+        Assert.Equal(expected, HostPrerequisiteService.IsSupportedMultipassVersion(version));
 
     [Fact]
     public void MultipassInstallerMetadataIsImmutableAndPinned()

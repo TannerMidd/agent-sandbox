@@ -1,51 +1,108 @@
 #cloud-config
 
-package_update: true
+package_update: false
 package_upgrade: false
 package_reboot_if_required: false
 ssh_pwauth: false
 
-packages:
-  - build-essential
-  - ca-certificates
-  - curl
-  - docker.io
-  - fd-find
-  - git
-  - git-lfs
-  - jq
-  - pipx
-  - python3
-  - python3-pip
-  - python3-venv
-  - ripgrep
-  - shellcheck
-  - tmux
-  - unzip
-  - xz-utils
-  - zip
-  - ufw
-
 write_files:
-  - path: /etc/ssh/sshd_config.d/99-agent-dev-hardening.conf
+  - path: /usr/local/sbin/agent-sandbox-provision
     owner: root:root
-    permissions: '0o644'
+    permissions: '0755'
     content: |
+      #!/bin/sh
+      set -eu
+
+      if command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+        apt-get install -y \
+          build-essential ca-certificates curl docker.io fd-find git git-lfs jq pipx \
+          python3 python3-pip python3-venv ripgrep shellcheck tmux unzip xz-utils zip ufw
+        if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+          apt-get install -y docker-compose-v2
+        fi
+
+        node_version='v22.23.2'
+        node_archive="node-${node_version}-linux-x64.tar.xz"
+        curl --fail --location --proto '=https' --tlsv1.2 \
+          "https://nodejs.org/download/release/${node_version}/${node_archive}" \
+          -o "/tmp/${node_archive}"
+        echo "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307  /tmp/${node_archive}" | sha256sum --check --strict
+        install -d -m 0755 "/opt/node-${node_version}"
+        tar -xJf "/tmp/${node_archive}" --strip-components=1 -C "/opt/node-${node_version}"
+        for executable in node npm npx corepack; do
+          ln -sfn "/opt/node-${node_version}/bin/${executable}" "/usr/local/bin/${executable}"
+        done
+        rm -f "/tmp/${node_archive}"
+
+        systemctl enable --now docker
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow 22/tcp
+        ufw --force enable
+      elif command -v apk >/dev/null 2>&1; then
+        apk update
+        apk add \
+          bash build-base ca-certificates curl docker docker-cli-compose fd git git-lfs jq nodejs npm \
+          pipx py3-pip python3 ripgrep shadow shellcheck sudo tmux unzip xz zip
+        rc-update add docker default
+        rc-service docker start
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf -y install \
+          '@development-tools' bash ca-certificates curl fd-find firewalld git git-lfs jq \
+          moby-engine nodejs npm pipx python3 python3-pip ripgrep ShellCheck sudo tmux unzip xz zip
+        systemctl enable --now docker
+        systemctl enable --now firewalld
+        firewall-cmd --permanent --add-service=ssh
+        firewall-cmd --reload
+      elif command -v pacman >/dev/null 2>&1; then
+        pacman -Syu --noconfirm --needed \
+          base-devel bash ca-certificates curl docker fd git git-lfs jq nodejs npm \
+          python python-pip python-pipx ripgrep shellcheck sudo tmux ufw unzip xz zip
+        systemctl enable --now docker
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow 22/tcp
+        ufw --force enable
+      else
+        echo 'Agent Sandbox supports apt, apk, dnf, and pacman cloud images.' >&2
+        exit 1
+      fi
+
+      git lfs install --system
+      guest_user="$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)"
+      if [ -z "$guest_user" ]; then
+        echo 'The image does not provide a default UID 1000 user.' >&2
+        exit 1
+      fi
+      guest_group="$(id -gn "$guest_user")"
+      install -d -m 0755 /home/ubuntu
+      install -d -m 0755 /home/ubuntu/.local/lib/agent-sandbox/requests
+      install -d -m 0755 /home/ubuntu/work
+      chown -R "$guest_user:$guest_group" /home/ubuntu
+      if command -v usermod >/dev/null 2>&1; then
+        usermod -aG docker "$guest_user"
+      else
+        addgroup "$guest_user" docker
+      fi
+
+      install -d -m 0755 /etc/ssh/sshd_config.d
+      cat > /etc/ssh/sshd_config.d/99-agent-sandbox-hardening.conf <<'EOF'
       PasswordAuthentication no
       KbdInteractiveAuthentication no
       PermitRootLogin no
       PermitEmptyPasswords no
+      EOF
+      if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+        sed -i '1iInclude /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+      fi
+      sshd -t
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl reload ssh || systemctl reload sshd
+      else
+        rc-service sshd restart
+      fi
 
 runcmd:
-  - [bash, -lc, 'set -euo pipefail; curl --fail --location --proto =https --tlsv1.2 https://nodejs.org/download/release/v22.23.2/node-v22.23.2-linux-x64.tar.xz -o /tmp/node-v22.23.2-linux-x64.tar.xz; echo "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307  /tmp/node-v22.23.2-linux-x64.tar.xz" | sha256sum --check --strict; install -d -m 0755 /opt/node-v22.23.2; tar -xJf /tmp/node-v22.23.2-linux-x64.tar.xz --strip-components=1 -C /opt/node-v22.23.2; ln -sfn /opt/node-v22.23.2/bin/node /usr/local/bin/node; ln -sfn /opt/node-v22.23.2/bin/npm /usr/local/bin/npm; ln -sfn /opt/node-v22.23.2/bin/npx /usr/local/bin/npx; ln -sfn /opt/node-v22.23.2/bin/corepack /usr/local/bin/corepack; rm -f /tmp/node-v22.23.2-linux-x64.tar.xz; node --version']
-  - [bash, -lc, 'set -eu; if apt-cache show docker-compose-v2 >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2; fi']
-  - [bash, -lc, 'git lfs install --system']
-  - [mkdir, -p, /home/ubuntu/work]
-  - [chown, ubuntu:ubuntu, /home/ubuntu/work]
-  - [usermod, -aG, docker, ubuntu]
-  - [systemctl, enable, --now, docker]
-  - [ufw, default, deny, incoming]
-  - [ufw, default, allow, outgoing]
-  - [ufw, allow, OpenSSH]
-  - [ufw, --force, enable]
-  - [bash, -lc, 'sshd -t && systemctl reload ssh']
+  - [sh, /usr/local/sbin/agent-sandbox-provision]

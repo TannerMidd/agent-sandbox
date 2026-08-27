@@ -6,7 +6,9 @@ public sealed record SandboxConfiguration(
     string InstanceName,
     ResourceProfile Resources,
     IReadOnlyList<string> SelectedPresetIds,
-    bool ImportedLegacyInstance = false);
+    bool ImportedLegacyInstance = false,
+    string ImageId = LinuxImages.DefaultId,
+    string? CustomImageUrl = null);
 
 public sealed record AgentSandboxSettings
 {
@@ -17,6 +19,8 @@ public sealed record AgentSandboxSettings
     public IReadOnlyList<SandboxConfiguration> Sandboxes { get; init; } = [];
     public SetupState SetupState { get; init; } = SetupState.Welcome;
     public ResourceProfile Resources { get; init; } = new(4, 4, 50);
+    public string ImageId { get; init; } = LinuxImages.DefaultId;
+    public string? CustomImageUrl { get; init; }
     public string? StoragePath { get; init; }
     public string Theme { get; init; } = "System";
     public bool ReducedMotion { get; init; }

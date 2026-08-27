@@ -2,7 +2,7 @@
 
 ## Security objective
 
-Agent Sandbox reduces the impact of mistakes made by development agents by running their code in a Hyper-V Ubuntu VM and by minimizing privileged and host-filesystem access.
+Agent Sandbox reduces the impact of mistakes made by development agents by running their code in a Hyper-V Linux VM and by minimizing privileged and host-filesystem access.
 
 It is not intended to contain kernel exploits, malicious hypervisor escape research, hostile insiders with Windows administrator access, or secrets deliberately copied into the VM.
 
@@ -19,6 +19,7 @@ It is not intended to contain kernel exploits, malicious hypervisor escape resea
 - No host credential forwarding or persistent mounts.
 - No arbitrary commands accepted by the elevated helper.
 - Pinned installer hash plus publisher certificate validation.
+- Catalog image allow-list; advanced custom images require credential-free HTTPS and reject loopback hosts.
 - Exact instance/snapshot targeting and explicit destructive confirmations.
 - Read/write guest file management only under `/home/ubuntu/work` by default.
 - Optional system browsing is read-only and never uses sudo.
@@ -32,7 +33,7 @@ It is not intended to contain kernel exploits, malicious hypervisor escape resea
 - Hyper-V and Multipass defects can cross the intended boundary.
 - Downloaded files can harm Windows when opened by another application.
 - Agent CLIs communicate with their providers and are governed by those providers' policies.
-- npm and Ubuntu package infrastructure remain external supply-chain dependencies.
+- npm, Node.js, and the selected distribution's image/package infrastructure remain external supply-chain dependencies; a user-supplied custom image is trusted guest input and is not app-side digest verified.
 - Unsigned preview installers can be replaced unless users verify hashes and attestations from the canonical release.
 
 Report vulnerabilities privately as described in [SECURITY.md](../SECURITY.md).

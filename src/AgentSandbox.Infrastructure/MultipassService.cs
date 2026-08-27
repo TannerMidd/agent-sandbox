@@ -61,7 +61,8 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             }
             var state = ParseState(ReadString(item, "state"));
             var ipv4 = ReadFirstString(item, "ipv4");
-            sandboxes.Add(new SandboxInfo(name, state, new ResourceProfile(4, 4, 50), ipv4, null, DateTimeOffset.UtcNow));
+            var release = ReadString(item, "release");
+            sandboxes.Add(new SandboxInfo(name, state, new ResourceProfile(4, 4, 50), ipv4, release, DateTimeOffset.UtcNow));
         }
         return sandboxes;
     }
@@ -98,12 +99,19 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
     public async Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ValidateIdentifier(request.InstanceName);
+        if (request.IsUserSuppliedImage)
+            _ = LinuxImages.ValidateCustomImageUrl(request.Image);
+        else if (!LinuxImages.IsKnownReference(request.Image))
+            throw new ArgumentException("The requested Linux image is not in the approved image catalog.", nameof(request));
         if (await GetSandboxAsync(request.InstanceName, cancellationToken) is not null)
             throw new InvalidOperationException($"Sandbox '{request.InstanceName}' already exists; provisioning will not overwrite it.");
         if (!File.Exists(request.CloudInitPath)) throw new FileNotFoundException("Cloud-init configuration was not found.", request.CloudInitPath);
 
         var id = Guid.NewGuid();
-        Report(progress, id, "Provision sandbox", OperationState.Running, "Launching Ubuntu");
+        var imageName = request.IsUserSuppliedImage
+            ? "custom Linux image"
+            : LinuxImages.All.Single(item => string.Equals(item.ImageReference, request.Image, StringComparison.Ordinal)).DisplayName;
+        Report(progress, id, "Provision sandbox", OperationState.Running, $"Launching {imageName}");
         var arguments = new[]
         {
             "launch", request.Image, "--name", request.InstanceName,
@@ -116,8 +124,8 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
         {
             await RunAsync(arguments, TimeSpan.FromMinutes(35), cancellationToken);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Waiting for cloud-init");
-            await RunAsync(["exec", request.InstanceName, "--", "cloud-init", "status", "--wait", "--long"], TimeSpan.FromMinutes(30), cancellationToken);
-            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", "set -eu; test -d /home/ubuntu/work; command -v git; command -v python3; command -v docker; test \"$(node --version)\" = v22.23.2; sudo -n docker info >/dev/null"], TimeSpan.FromMinutes(5), cancellationToken);
+            await RunAsync(["exec", request.InstanceName, "--", "cloud-init", "status", "--wait"], TimeSpan.FromMinutes(30), cancellationToken);
+            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", "set -eu; test -d /home/ubuntu/work; command -v git; command -v python3; command -v docker; command -v npm; node -e 'if (+process.versions.node.split(\".\")[0] < 20) process.exit(1)'; docker info >/dev/null"], TimeSpan.FromMinutes(5), cancellationToken);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Creating clean baseline");
             await RunAsync(["stop", request.InstanceName], TimeSpan.FromMinutes(10), cancellationToken);
             await RunAsync(["snapshot", request.InstanceName, "--name", ValidateIdentifier(request.BaselineSnapshot)], TimeSpan.FromMinutes(10), cancellationToken);

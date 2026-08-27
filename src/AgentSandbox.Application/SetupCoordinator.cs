@@ -87,14 +87,35 @@ public sealed class SetupCoordinator(
         return settings;
     }
 
+    public Task<OperationProgress> ProvisionAsync(
+        string instanceName,
+        ResourceProfile resources,
+        IReadOnlyList<string> presetIds,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        ProvisionAsync(instanceName, LinuxImages.DefaultId, resources, presetIds, progress, cancellationToken);
+
+    public Task<OperationProgress> ProvisionAsync(
+        string instanceName,
+        string imageId,
+        ResourceProfile resources,
+        IReadOnlyList<string> presetIds,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        ProvisionAsync(instanceName, imageId, null, resources, presetIds, progress, cancellationToken);
+
     public async Task<OperationProgress> ProvisionAsync(
         string instanceName,
+        string imageId,
+        string? customImageUrl,
         ResourceProfile resources,
         IReadOnlyList<string> presetIds,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ValidateInstanceName(instanceName);
+        var image = LinuxImages.GetRequired(imageId);
+        var imageReference = LinuxImages.ResolveReference(imageId, customImageUrl);
         var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
         if (settings.Sandboxes.Count > 0 && settings.SetupState == SetupState.NeedsReview)
             throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before creating another VM.");
@@ -105,18 +126,21 @@ public sealed class SetupCoordinator(
         var validationErrors = resources.Validate(
             Environment.ProcessorCount,
             host.TotalMemoryBytes,
-            freeDiskBytes?.Invoke(cloudInitPath) ?? GetFreeDiskBytes(cloudInitPath)).ToList();
+            freeDiskBytes?.Invoke(cloudInitPath) ?? GetFreeDiskBytes(cloudInitPath),
+            image.MinimumResources).ToList();
         validationErrors.AddRange(ValidateAggregateResources(settings.Sandboxes, resources, Environment.ProcessorCount, host.TotalMemoryBytes));
         if (validationErrors.Count > 0)
             throw new InvalidOperationException(string.Join(Environment.NewLine, validationErrors));
 
         var initialProvision = settings.Sandboxes.Count == 0;
-        var request = new ProvisionRequest(instanceName, "24.04", resources, cloudInitPath, "clean");
+        var request = new ProvisionRequest(instanceName, imageReference, resources, cloudInitPath, "clean", image.IsUserSupplied);
         if (initialProvision)
         {
             settings = settings with
             {
                 InstanceName = instanceName,
+                ImageId = image.Id,
+                CustomImageUrl = image.IsUserSupplied ? imageReference : null,
                 Resources = resources,
                 SelectedPresetIds = presetIds,
                 SetupState = SetupState.Provisioning
@@ -124,7 +148,7 @@ public sealed class SetupCoordinator(
             await settingsStore.SaveAsync(settings, cancellationToken);
         }
 
-        var configuration = new SandboxConfiguration(instanceName, resources, []);
+        var configuration = new SandboxConfiguration(instanceName, resources, [], ImageId: image.Id, CustomImageUrl: image.IsUserSupplied ? imageReference : null);
         var provisionResult = await multipass.ProvisionAsync(request, progress, cancellationToken);
         if (provisionResult.State != OperationState.Succeeded)
         {
@@ -190,6 +214,8 @@ public sealed class SetupCoordinator(
                 InstanceName = "agent-sandbox",
                 ImportedLegacyInstance = false,
                 Resources = new ResourceProfile(4, 4, 50),
+                ImageId = LinuxImages.DefaultId,
+                CustomImageUrl = null,
                 SelectedPresetIds = [],
                 SetupState = SetupState.ResourceConfiguration
             }
@@ -231,6 +257,9 @@ public sealed class SetupCoordinator(
 
     private async Task<AgentSandboxSettings> NormalizeAsync(AgentSandboxSettings settings, CancellationToken cancellationToken)
     {
+        _ = LinuxImages.ResolveReference(settings.ImageId, settings.CustomImageUrl);
+        foreach (var configuration in settings.Sandboxes)
+            _ = LinuxImages.ResolveReference(configuration.ImageId, configuration.CustomImageUrl);
         var interrupted = settings.SetupState is SetupState.Provisioning or SetupState.InstallingPresets;
         if (settings.Sandboxes.Count > 0 && interrupted)
         {
@@ -246,7 +275,9 @@ public sealed class SetupCoordinator(
                     settings.InstanceName,
                     existing?.Resources ?? settings.Resources,
                     interrupted ? [] : settings.SelectedPresetIds,
-                    settings.ImportedLegacyInstance);
+                    settings.ImportedLegacyInstance,
+                    settings.ImageId,
+                    settings.CustomImageUrl);
                 settings = UpdateActive(settings with { Sandboxes = [configuration] }, configuration) with
                 {
                     SetupState = interrupted ? SetupState.NeedsReview : settings.SetupState
@@ -272,6 +303,8 @@ public sealed class SetupCoordinator(
         InstanceName = configuration.InstanceName,
         ImportedLegacyInstance = configuration.ImportedLegacyInstance,
         Resources = configuration.Resources,
+        ImageId = configuration.ImageId,
+        CustomImageUrl = configuration.CustomImageUrl,
         SelectedPresetIds = configuration.SelectedPresetIds
     };
 

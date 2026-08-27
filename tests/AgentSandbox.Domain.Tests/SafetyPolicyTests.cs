@@ -22,6 +22,38 @@ public sealed class SafetyPolicyTests
         Assert.Equal(3, errors.Count);
     }
 
+    [Fact]
+    public void CuratedLinuxImagesHaveUniqueIdsAndApprovedReferences()
+    {
+        Assert.Equal(7, LinuxImages.All.Count);
+        Assert.Equal(LinuxImages.All.Count, LinuxImages.All.Select(image => image.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(LinuxImages.All.Where(image => !image.IsUserSupplied), image => Assert.True(LinuxImages.IsKnownReference(image.ImageReference)));
+        Assert.Equal(new ResourceProfile(1, 1, 10), LinuxImages.GetRequired("alpine-3.22").MinimumResources);
+        Assert.Equal(new ResourceProfile(1, 1, 15), LinuxImages.GetRequired("alpine-3.22").RecommendedResources);
+    }
+
+    [Theory]
+    [InlineData("https://images.example.org/arch.qcow2")]
+    [InlineData("https://cdn.example.org/image.qcow2?build=42")]
+    public void CustomCloudImageRequiresSafeHttpsUrl(string url) =>
+        Assert.Equal(url, LinuxImages.ValidateCustomImageUrl(url));
+
+    [Theory]
+    [InlineData("http://images.example.org/image.qcow2")]
+    [InlineData("https://user:secret@images.example.org/image.qcow2")]
+    [InlineData("https://localhost/image.qcow2")]
+    [InlineData("https://127.0.0.1/image.qcow2")]
+    [InlineData("https://[::1]/image.qcow2")]
+    public void UnsafeCustomCloudImageUrlIsRejected(string url) =>
+        Assert.Throws<ArgumentException>(() => LinuxImages.ValidateCustomImageUrl(url));
+
+    [Fact]
+    public void LightweightImageCanUseItsLowerResourceFloor()
+    {
+        var alpine = LinuxImages.GetRequired("alpine-3.22");
+        Assert.Empty(new ResourceProfile(1, 1, 10).Validate(8, 16L << 30, 100L << 30, alpine.MinimumResources));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(".")]

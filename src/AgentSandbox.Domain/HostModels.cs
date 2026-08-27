@@ -42,18 +42,19 @@ public sealed record ResourceProfile(int CpuCount, int MemoryGiB, int DiskGiB)
         return new ResourceProfile(cpu, memory, disk);
     }
 
-    public IReadOnlyList<string> Validate(int logicalProcessors, long totalMemoryBytes, long freeDiskBytes)
+    public IReadOnlyList<string> Validate(int logicalProcessors, long totalMemoryBytes, long freeDiskBytes, ResourceProfile? minimum = null)
     {
+        minimum ??= new ResourceProfile(2, 4, 30);
         var errors = new List<string>();
         var totalMemoryGiB = (int)(totalMemoryBytes / 1_073_741_824L);
         var freeDiskGiB = (int)(freeDiskBytes / 1_073_741_824L);
 
-        if (CpuCount < 2 || CpuCount > 8 || CpuCount > Math.Max(2, logicalProcessors - 2))
-            errors.Add("CPU count must be between 2 and 8 and leave at least two logical processors for Windows.");
-        if (MemoryGiB < 4 || MemoryGiB > 16 || MemoryGiB > Math.Max(4, totalMemoryGiB - 6))
-            errors.Add("Memory must be between 4 and 16 GiB and leave at least 6 GiB for Windows.");
-        if (DiskGiB < 30 || DiskGiB > freeDiskGiB - 10)
-            errors.Add("Disk must be at least 30 GiB and leave at least 10 GiB free.");
+        if (CpuCount < minimum.CpuCount || CpuCount > 8 || CpuCount > Math.Max(2, logicalProcessors - 2))
+            errors.Add($"CPU count must be between {minimum.CpuCount} and 8 and leave at least two logical processors for Windows.");
+        if (MemoryGiB < minimum.MemoryGiB || MemoryGiB > 16 || MemoryGiB > Math.Max(4, totalMemoryGiB - 6))
+            errors.Add($"Memory must be between {minimum.MemoryGiB} and 16 GiB and leave at least 6 GiB for Windows.");
+        if (DiskGiB < minimum.DiskGiB || DiskGiB > freeDiskGiB - 10)
+            errors.Add($"Disk must be at least {minimum.DiskGiB} GiB and leave at least 10 GiB free.");
         return errors;
     }
 }
@@ -63,9 +64,13 @@ public sealed record SandboxInfo(
     SandboxState State,
     ResourceProfile Resources,
     string? IPv4Address,
-    string? UbuntuRelease,
+    string? OsRelease,
     DateTimeOffset LastUpdatedAt,
-    bool IsLegacyImport = false);
+    bool IsLegacyImport = false)
+{
+    [Obsolete("Use OsRelease for distribution-neutral code.")]
+    public string? UbuntuRelease => OsRelease;
+}
 
 public sealed record SnapshotInfo(
     string Name,

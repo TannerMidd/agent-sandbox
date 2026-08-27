@@ -68,6 +68,8 @@ public sealed class UiContractTests
         var code = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml.cs"));
         Assert.Contains("InstallMultipassAsync", code, StringComparison.Ordinal);
         Assert.Contains("ProvisionAsync", code, StringComparison.Ordinal);
+        Assert.Contains("Linux image", code, StringComparison.Ordinal);
+        Assert.Contains("LinuxImages.GetRequired", code, StringComparison.Ordinal);
         Assert.Contains("Type {exact}", code, StringComparison.Ordinal);
         Assert.Contains("Purge forever", code, StringComparison.Ordinal);
         Assert.Contains("OVERWRITE", code, StringComparison.Ordinal);
