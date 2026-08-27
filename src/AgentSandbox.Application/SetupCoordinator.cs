@@ -12,6 +12,16 @@ public sealed class SetupCoordinator(
     public async Task<AgentSandboxSettings> ResumeSetupAsync(CancellationToken cancellationToken = default)
     {
         var settings = await settingsStore.LoadAsync(cancellationToken);
+        if (settings.ImportedLegacyInstance && string.Equals(settings.InstanceName, "agent-dev", StringComparison.Ordinal))
+        {
+            var imported = await multipass.GetSandboxAsync(settings.InstanceName, cancellationToken);
+            if (imported is not null && imported.State != SandboxState.Failed)
+            {
+                var recovered = settings with { SetupState = SetupState.Ready, Resources = imported.Resources };
+                if (settings != recovered) await settingsStore.SaveAsync(recovered, cancellationToken);
+                return recovered;
+            }
+        }
         var host = await prerequisites.InspectAsync(cancellationToken);
         var nextState = DetermineNextState(host, settings);
         if (settings.SetupState != nextState)

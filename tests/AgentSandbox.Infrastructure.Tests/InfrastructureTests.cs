@@ -109,6 +109,16 @@ public sealed class InfrastructureTests
         Assert.Equal("Canonical", release.Publisher);
     }
 
+    [Theory]
+    [InlineData("Multipass", "Canonical Ltd", true)]
+    [InlineData("Multipass", "Canonical", true)]
+    [InlineData("Multipass", "Unknown publisher", false)]
+    [InlineData("Another product", "Canonical Ltd", false)]
+    public void MultipassRegistrationRequiresExactProductAndCanonicalPublisher(string name, string publisher, bool expected)
+    {
+        Assert.Equal(expected, MultipassLocator.IsCanonicalRegistration(name, publisher));
+    }
+
     [Fact]
     public async Task OperationHistoryRollsForwardWithoutSecrets()
     {

@@ -49,7 +49,6 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     public ObservableCollection<DiagnosticRecord> Diagnostics { get; } = [];
     public ObservableCollection<AgentPresetManifest> Presets { get; } = [];
     public ObservableCollection<string> TransferActivity { get; } = [];
-    public event EventHandler? DiagnosticsRequested;
     public event EventHandler? SetupRequested;
 
     public AgentSandboxSettings CurrentSettings => settings;
@@ -64,10 +63,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         {
             settings = await services.Lifecycle.ResumeSetupAsync();
             currentSetupState = settings.SetupState;
-            SetupVisibility = settings.IsReady ? Visibility.Collapsed : Visibility.Visible;
-            SetupHeading = SetupTitle(settings.SetupState);
-            SetupDetail = SetupDescription(settings.SetupState);
-            SetupActionLabel = SetupAction(settings.SetupState);
+            await ApplySetupPresentationAsync();
             CpuLabel = $"{settings.Resources.CpuCount} vCPU";
             MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
             DiskLabel = $"{settings.Resources.DiskGiB} GiB";
@@ -111,15 +107,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    public async Task ContinueSetupAsync()
-    {
-        if (currentSetupState == SetupState.NeedsReview)
-        {
-            DiagnosticsRequested?.Invoke(this, EventArgs.Empty);
-            return;
-        }
-        SetupRequested?.Invoke(this, EventArgs.Empty);
-    }
+    public void ContinueSetup() => SetupRequested?.Invoke(this, EventArgs.Empty);
 
     public async Task<HostReadiness> InspectHostAsync() => await services.Prerequisites.InspectAsync();
 
@@ -315,14 +303,29 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         settings = await services.Lifecycle.ResumeSetupAsync();
         currentSetupState = settings.SetupState;
-        SetupVisibility = settings.IsReady ? Visibility.Collapsed : Visibility.Visible;
-        SetupHeading = SetupTitle(currentSetupState);
-        SetupDetail = SetupDescription(currentSetupState);
-        SetupActionLabel = SetupAction(currentSetupState);
+        await ApplySetupPresentationAsync();
         CpuLabel = $"{settings.Resources.CpuCount} vCPU";
         MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
         DiskLabel = $"{settings.Resources.DiskGiB} GiB";
         await RefreshSandboxCoreAsync();
+    }
+
+    private async Task ApplySetupPresentationAsync()
+    {
+        SetupVisibility = settings.IsReady ? Visibility.Collapsed : Visibility.Visible;
+        SetupHeading = SetupTitle(currentSetupState);
+        SetupDetail = SetupDescription(currentSetupState);
+        SetupActionLabel = SetupAction(currentSetupState);
+
+        if (currentSetupState != SetupState.NeedsReview ||
+            settings.ImportedLegacyInstance ||
+            string.Equals(settings.InstanceName, "agent-dev", StringComparison.Ordinal))
+            return;
+
+        if (await InspectLegacyImportAsync() is null) return;
+        SetupHeading = "Use your existing agent-dev sandbox";
+        SetupDetail = "Import preserves its name, data, storage, and snapshots. Nothing is renamed, migrated, or rebuilt.";
+        SetupActionLabel = "Import existing sandbox";
     }
 
     private async Task LoadPresetsAsync()

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using AgentSandbox.Application;
 using AgentSandbox.App.ViewModels;
 using AgentSandbox.Domain;
 using Microsoft.UI.Xaml;
@@ -23,7 +24,6 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
-        ViewModel.DiagnosticsRequested += (_, _) => ShellNavigation.SelectedItem = DiagnosticsNavigationItem;
         ViewModel.SetupRequested += async (_, _) => await ShowSetupAsync();
     }
 
@@ -86,7 +86,15 @@ public sealed partial class MainPage : Page
                 case SetupState.InstallingPresets:
                     await MessageAsync("Setup in progress", "The current provisioning operation is resumable. Keep this window open while the VM is prepared.");
                     break;
-                case SetupState.NeedsReview: ShellNavigation.SelectedItem = DiagnosticsNavigationItem; break;
+                case SetupState.NeedsReview:
+                    var legacy = await ViewModel.InspectLegacyImportAsync();
+                    if (legacy is not null &&
+                        !ViewModel.CurrentSettings.ImportedLegacyInstance &&
+                        !string.Equals(ViewModel.CurrentSettings.InstanceName, legacy.InstanceName, StringComparison.Ordinal))
+                        await ShowLegacyImportAsync(legacy);
+                    else
+                        ShellNavigation.SelectedItem = DiagnosticsNavigationItem;
+                    break;
             }
         }
         catch (Exception exception) { await MessageAsync("Setup needs attention", exception.Message); }
@@ -137,7 +145,13 @@ public sealed partial class MainPage : Page
     private async Task ShowResourceSetupAsync()
     {
         var host = await ViewModel.InspectHostAsync();
-        if (!host.CanProvision) { ShellNavigation.SelectedItem = DiagnosticsNavigationItem; return; }
+        var legacy = await ViewModel.InspectLegacyImportAsync();
+        if (!host.CanProvision)
+        {
+            if (legacy is not null) await ShowLegacyImportAsync(legacy);
+            else ShellNavigation.SelectedItem = DiagnosticsNavigationItem;
+            return;
+        }
 
         var storageRoot = Path.GetPathRoot(ViewModel.CurrentSettings.StoragePath ?? AppContext.BaseDirectory)!;
         var recommendation = ResourceProfile.Recommend(Environment.ProcessorCount, host.AvailableMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
@@ -161,7 +175,6 @@ public sealed partial class MainPage : Page
         panel.Children.Add(new TextBlock { Text = "Optional pinned agent presets", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(presetPanel);
 
-        var legacy = await ViewModel.InspectLegacyImportAsync();
         var dialog = Dialog("Create your agent sandbox", panel, "Provision Ubuntu 24.04", "Cancel");
         if (legacy is not null)
         {
@@ -178,6 +191,26 @@ public sealed partial class MainPage : Page
         var progress = new Progress<OperationProgress>(item => ViewModel.OperationLabel = item.Percent is null ? item.Phase : $"{item.Phase} • {item.Percent}%");
         await ViewModel.ProvisionAsync(profile, selected, progress);
         await MessageAsync("Agent Sandbox is ready", "Ubuntu 24.04 passed its health checks, the clean snapshot was created, and your selected presets were installed.");
+    }
+
+    private async Task ShowLegacyImportAsync(LegacyImportCandidate legacy)
+    {
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"The existing {legacy.InstanceName} VM is {legacy.State.ToString().ToLowerInvariant()} and has {legacy.SnapshotNames.Count} snapshot(s).",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Import only associates Agent Sandbox with this exact VM. Its name, storage, snapshots, files, and configuration are preserved; nothing is renamed, migrated, or rebuilt.",
+            Opacity = 0.75,
+            TextWrapping = TextWrapping.Wrap
+        });
+        if (await Dialog("Use your existing sandbox?", panel, "Import agent-dev", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
+        await ViewModel.ImportLegacyAsync(legacy);
+        await MessageAsync("Existing sandbox connected", $"Agent Sandbox now manages {legacy.InstanceName}. Your VM and its data were not changed.");
     }
 
     private async void ChooseHostFolder_Click(object sender, RoutedEventArgs e) { var folder = await PickFolderAsync(); if (folder is not null) ViewModel.NavigateHost(folder.Path); }

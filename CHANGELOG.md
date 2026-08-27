@@ -12,3 +12,6 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Added a professional dark dashboard, dual-pane file workspace, recovery, diagnostics, and settings views.
 - Added exact-version Codex, Claude Code, Gemini CLI, and Pi manifests with npm integrity metadata.
 - Added tests, unsigned WiX release scaffolding, CI, documentation, SBOM, checksum, and attestation workflows.
+- Fixed existing `agent-dev` discovery so import remains available during host-review states and never renames, migrates, or rebuilds the VM.
+- Replaced the elevated-only Hyper-V readiness query with read-only CIM checks that work for the normal desktop user.
+- Fixed Multipass discovery for Canonical's Windows package by validating the exact Program Files path against its installed-product publisher record.

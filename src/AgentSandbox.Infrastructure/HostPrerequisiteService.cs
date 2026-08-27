@@ -36,7 +36,7 @@ public sealed class HostPrerequisiteService(
 
         try
         {
-            const string script = "$p=Get-CimInstance Win32_Processor | Select-Object -First 1 VirtualizationFirmwareEnabled,SecondLevelAddressTranslationExtensions; $h=(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All).State; [pscustomobject]@{virtualization=[bool]$p.VirtualizationFirmwareEnabled;slat=[bool]$p.SecondLevelAddressTranslationExtensions;hyperv=($h -eq 'Enabled')} | ConvertTo-Json -Compress";
+            const string script = "$p=Get-CimInstance Win32_Processor | Select-Object -First 1 VirtualizationFirmwareEnabled,SecondLevelAddressTranslationExtensions; $c=Get-CimInstance Win32_ComputerSystem | Select-Object -First 1 HypervisorPresent; $h=Get-CimInstance Win32_OptionalFeature -Filter \"Name='Microsoft-Hyper-V-All'\" | Select-Object -First 1 InstallState; [pscustomobject]@{virtualization=([bool]$c.HypervisorPresent -or [bool]$p.VirtualizationFirmwareEnabled);slat=([bool]$c.HypervisorPresent -or [bool]$p.SecondLevelAddressTranslationExtensions);hyperv=($h.InstallState -eq 1)} | ConvertTo-Json -Compress";
             var result = await runner.RunAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], timeout: TimeSpan.FromSeconds(30), cancellationToken: cancellationToken);
             if (result.IsSuccess)
             {
@@ -47,7 +47,7 @@ public sealed class HostPrerequisiteService(
         }
         catch (Exception exception)
         {
-            diagnostics.Add(new DiagnosticRecord("HOST_INSPECTION", "Some host checks could not run", DiagnosticSeverity.Warning, exception.Message, "Run Agent Sandbox again as a local administrator."));
+            diagnostics.Add(new DiagnosticRecord("HOST_INSPECTION", "Some host checks could not run", DiagnosticSeverity.Warning, exception.Message, "Review Diagnostics and retry the check."));
         }
 
         if (!virtualization) diagnostics.Add(Error("HOST_VIRTUALIZATION", "Hardware virtualization is unavailable", "Enable virtualization and SLAT in firmware before continuing."));

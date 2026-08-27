@@ -45,6 +45,8 @@ public sealed class UiContractTests
         Assert.Contains("Type {exact}", code, StringComparison.Ordinal);
         Assert.Contains("Purge forever", code, StringComparison.Ordinal);
         Assert.Contains("OVERWRITE", code, StringComparison.Ordinal);
+        Assert.Contains("ShowLegacyImportAsync", code, StringComparison.Ordinal);
+        Assert.Contains("nothing is renamed, migrated, or rebuilt", code, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -74,6 +76,15 @@ public sealed class UiContractTests
         Assert.DoesNotContain("RemoveFile", wix, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("AgentSandbox.App.exe", wix, StringComparison.Ordinal);
         Assert.Contains("unsigned", wix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HostReadinessDoesNotRequireAnElevatedFeatureQuery()
+    {
+        var code = File.ReadAllText(RepoFile("src", "AgentSandbox.Infrastructure", "HostPrerequisiteService.cs"));
+        Assert.Contains("HypervisorPresent", code, StringComparison.Ordinal);
+        Assert.Contains("Win32_OptionalFeature", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-WindowsOptionalFeature", code, StringComparison.Ordinal);
     }
 
     [Fact]
