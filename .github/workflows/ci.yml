@@ -12,13 +12,13 @@ jobs:
   build-and-test:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Restore
@@ -36,7 +36,7 @@ jobs:
       - name: Test guest helper
         run: python tests/guest_helper_tests.py
       - name: Upload test build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-sandbox-ci-x64
           path: src/AgentSandbox.App/bin/x64/Release/**

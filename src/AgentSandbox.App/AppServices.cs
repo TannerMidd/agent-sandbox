@@ -40,6 +40,9 @@ public sealed class AppServices : IDisposable
 
     public void Dispose()
     {
+        foreach (var service in guestFiles.Values)
+            if (service is IDisposable disposable) disposable.Dispose();
+        if (History is IDisposable history) history.Dispose();
         httpClient.Dispose();
         GC.SuppressFinalize(this);
     }

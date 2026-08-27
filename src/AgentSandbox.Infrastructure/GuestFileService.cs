@@ -8,7 +8,7 @@ public sealed class GuestFileService(
     IProcessRunner runner,
     IMultipassLocator locator,
     string instanceName,
-    string guestHelperPath) : IGuestFileService
+    string guestHelperPath) : IGuestFileService, IDisposable
 {
     private const string RemoteHelper = "/home/ubuntu/.local/lib/agent-sandbox/guest_helper.py";
     private readonly SemaphoreSlim deploymentLock = new(1, 1);
@@ -91,7 +91,7 @@ public sealed class GuestFileService(
         {
             var sourceParts = guestPaths[index];
             GuestPathPolicy.ValidateComponents(sourceParts);
-            var name = ValidateWindowsName(sourceParts.Last());
+            var name = ValidateWindowsName(sourceParts[^1]);
             var finalPath = ResolveHostConflict(Path.Combine(destinationDirectory, name), conflictPolicy);
             var partialPath = finalPath + $".{jobId:N}.partial";
             Report(progress, jobId, "Download files", OperationState.Running, $"Downloading {name}", index, guestPaths.Count);
@@ -203,7 +203,7 @@ public sealed class GuestFileService(
     }
 
     private static string ConflictName(FileConflictPolicy policy) => policy.ToString().ToLowerInvariant();
-    private static OperationState Aggregate(IReadOnlyList<TransferItemResult> items) => items.Count > 0 && items.All(item => item.State == OperationState.Succeeded) ? OperationState.Succeeded : items.Any(item => item.State == OperationState.CleanupPending) ? OperationState.CleanupPending : OperationState.Failed;
+    private static OperationState Aggregate(List<TransferItemResult> items) => items.Count > 0 && items.All(item => item.State == OperationState.Succeeded) ? OperationState.Succeeded : items.Any(item => item.State == OperationState.CleanupPending) ? OperationState.CleanupPending : OperationState.Failed;
     private static void ValidateDownloadedTree(string path)
     {
         if (!Directory.Exists(path)) throw new DirectoryNotFoundException("The transferred directory was not created.");
@@ -218,6 +218,12 @@ public sealed class GuestFileService(
     private static long SizeOf(string path) => File.Exists(path)
         ? new FileInfo(path).Length
         : Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Sum(file => new FileInfo(file).Length);
+
+    public void Dispose()
+    {
+        deploymentLock.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     private static void CommitHostFile(string partialPath, string finalPath, FileConflictPolicy policy, Guid jobId)
     {

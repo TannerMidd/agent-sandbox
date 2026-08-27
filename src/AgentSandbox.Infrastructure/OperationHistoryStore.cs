@@ -4,7 +4,7 @@ using AgentSandbox.Domain;
 
 namespace AgentSandbox.Infrastructure;
 
-public sealed class OperationHistoryStore : IOperationHistoryStore
+public sealed class OperationHistoryStore : IOperationHistoryStore, IDisposable
 {
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
     private readonly string path;
@@ -36,5 +36,11 @@ public sealed class OperationHistoryStore : IOperationHistoryStore
         var lines = await File.ReadAllLinesAsync(path, cancellationToken);
         return lines.TakeLast(count).Select(line => JsonSerializer.Deserialize<OperationProgress>(line, Options))
             .Where(item => item is not null).Cast<OperationProgress>().ToArray();
+    }
+
+    public void Dispose()
+    {
+        writeLock.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

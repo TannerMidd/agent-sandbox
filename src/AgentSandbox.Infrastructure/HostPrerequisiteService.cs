@@ -18,6 +18,7 @@ public sealed class HostPrerequisiteService(
 {
     public async Task<HostReadiness> InspectAsync(CancellationToken cancellationToken = default)
     {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Agent Sandbox host inspection requires Windows.");
         var diagnostics = new List<DiagnosticRecord>();
         var version = Environment.OSVersion.Version;
         var isWindows11 = OperatingSystem.IsWindows() && version.Build >= 22000;
@@ -77,6 +78,7 @@ public sealed class HostPrerequisiteService(
 
     public async Task<SetupHelperResponse> ExecuteElevatedAsync(SetupHelperRequest request, CancellationToken cancellationToken = default)
     {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Agent Sandbox elevated setup requires Windows.");
         if (!SetupHelperOperations.Allowed.Contains(request.Operation))
             throw new InvalidOperationException("The requested elevated operation is not allow-listed.");
         if (!File.Exists(setupHelperPath))

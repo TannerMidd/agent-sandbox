@@ -6,6 +6,8 @@ namespace AgentSandbox.Infrastructure;
 
 public sealed class PresetService(IProcessRunner runner, IMultipassLocator locator, string manifestDirectory) : IPresetService
 {
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     public async Task<IReadOnlyList<AgentPresetManifest>> GetAvailableAsync(CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(manifestDirectory)) return [];
@@ -13,7 +15,7 @@ public sealed class PresetService(IProcessRunner runner, IMultipassLocator locat
         foreach (var file in Directory.EnumerateFiles(manifestDirectory, "*.json").Order(StringComparer.Ordinal))
         {
             await using var stream = File.OpenRead(file);
-            var manifest = await JsonSerializer.DeserializeAsync<AgentPresetManifest>(stream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, cancellationToken);
+            var manifest = await JsonSerializer.DeserializeAsync<AgentPresetManifest>(stream, ManifestJsonOptions, cancellationToken);
             if (manifest is null || manifest.SchemaVersion != 1 || manifest.Artifacts.Count != 1)
                 throw new InvalidDataException($"Preset manifest '{Path.GetFileName(file)}' is invalid.");
             manifests.Add(manifest);

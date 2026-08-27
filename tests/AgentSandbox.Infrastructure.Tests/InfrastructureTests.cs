@@ -7,8 +7,11 @@ namespace AgentSandbox.Infrastructure.Tests;
 
 public sealed class InfrastructureTests
 {
+    private static readonly string[] ExactDeleteArguments = ["delete", "--purge", "agent-sandbox"];
+    private static readonly string[] GlobalPurgeArguments = ["purge"];
+
     [Fact]
-    public async Task Settings_are_written_atomically_and_round_trip()
+    public async Task SettingsAreWrittenAtomicallyAndRoundTrip()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -30,7 +33,7 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public async Task Process_runner_keeps_arguments_separate()
+    public async Task ProcessRunnerKeepsArgumentsSeparate()
     {
         var result = await new ProcessRunner().RunAsync("where.exe", ["definitely-not-a-command;whoami"], timeout: TimeSpan.FromSeconds(5));
         Assert.NotEqual(0, result.ExitCode);
@@ -38,7 +41,7 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public void Diagnostics_redact_credentials_and_user_paths()
+    public void DiagnosticsRedactCredentialsAndUserPaths()
     {
         var value = $@"C:\Users\{Environment.UserName}\project token=abc Bearer secret-token";
         var redacted = DiagnosticRedactor.Redact(value);
@@ -48,7 +51,7 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public async Task Multipass_contract_rejects_malformed_json()
+    public async Task MultipassContractRejectsMalformedJson()
     {
         var runner = new ScriptedRunner(new ProcessResult(0, "not-json", ""));
         var service = new MultipassService(runner, new FixedLocator());
@@ -56,19 +59,19 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public async Task Exact_delete_never_uses_global_purge()
+    public async Task ExactDeleteNeverUsesGlobalPurge()
     {
         var runner = new ScriptedRunner(
             new ProcessResult(0, "{\"list\":[{\"name\":\"agent-sandbox\",\"state\":\"STOPPED\"}]}", ""),
             new ProcessResult(0, "", ""));
         var service = new MultipassService(runner, new FixedLocator());
         await service.DeleteAsync("agent-sandbox", purge: true);
-        Assert.Equal(new[] { "delete", "--purge", "agent-sandbox" }, runner.Calls[1]);
-        Assert.DoesNotContain(runner.Calls, call => call.SequenceEqual(new[] { "purge" }));
+        Assert.Equal(ExactDeleteArguments, runner.Calls[1]);
+        Assert.DoesNotContain(runner.Calls, call => call.SequenceEqual(GlobalPurgeArguments));
     }
 
     [Fact]
-    public async Task Partial_provisioning_is_reported_for_recovery()
+    public async Task PartialProvisioningIsReportedForRecovery()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -90,14 +93,14 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public async Task Process_runner_times_out_and_kills_child()
+    public async Task ProcessRunnerTimesOutAndKillsChild()
     {
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ProcessRunner().RunAsync(
             "powershell.exe", ["-NoProfile", "-Command", "Start-Sleep -Seconds 30"], timeout: TimeSpan.FromMilliseconds(200)));
     }
 
     [Fact]
-    public void Multipass_installer_metadata_is_immutable_and_pinned()
+    public void MultipassInstallerMetadataIsImmutableAndPinned()
     {
         var release = new MultipassInstallerService(new HttpClient()).Release;
         Assert.Equal(new Version(1, 16, 3), release.Version);
@@ -107,7 +110,7 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public async Task Operation_history_rolls_forward_without_secrets()
+    public async Task OperationHistoryRollsForwardWithoutSecrets()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);

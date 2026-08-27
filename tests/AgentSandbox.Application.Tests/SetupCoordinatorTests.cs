@@ -6,21 +6,21 @@ namespace AgentSandbox.Application.Tests;
 public sealed class SetupCoordinatorTests
 {
     [Fact]
-    public void Setup_requires_hyper_v_before_multipass()
+    public void SetupRequiresHyperVBeforeMultipass()
     {
         var host = ReadyHost() with { IsHyperVEnabled = false, IsMultipassInstalled = false };
         Assert.Equal(SetupState.HyperVRequired, SetupCoordinator.DetermineNextState(host, new AgentSandboxSettings()));
     }
 
     [Fact]
-    public void Pending_restart_takes_precedence()
+    public void PendingRestartTakesPrecedence()
     {
         var host = ReadyHost() with { IsRebootPending = true, IsHyperVEnabled = false };
         Assert.Equal(SetupState.RebootRequired, SetupCoordinator.DetermineNextState(host, new AgentSandboxSettings()));
     }
 
     [Fact]
-    public void Ready_state_is_resumed()
+    public void ReadyStateIsResumed()
     {
         Assert.Equal(SetupState.Ready, SetupCoordinator.DetermineNextState(ReadyHost(), new AgentSandboxSettings { SetupState = SetupState.Ready }));
     }
@@ -31,13 +31,13 @@ public sealed class SetupCoordinatorTests
     [InlineData(SetupState.MultipassRequired)]
     [InlineData(SetupState.StorageRequired)]
     [InlineData(SetupState.NeedsReview)]
-    public void Completed_host_checks_advance_to_resource_configuration(SetupState prior)
+    public void CompletedHostChecksAdvanceToResourceConfiguration(SetupState prior)
     {
         Assert.Equal(SetupState.ResourceConfiguration, SetupCoordinator.DetermineNextState(ReadyHost(), new AgentSandboxSettings { SetupState = prior }));
     }
 
     [Fact]
-    public async Task Legacy_import_rejects_any_non_exact_instance()
+    public async Task LegacyImportRejectsAnyNonExactInstance()
     {
         var coordinator = new SetupCoordinator(new MemorySettings(), new FakePrerequisites(), new FakeMultipass(), new FakePresets());
         var candidate = new LegacyImportCandidate("Agent-Dev", SandboxState.Stopped, null, [], []);
