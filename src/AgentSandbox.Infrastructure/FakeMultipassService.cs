@@ -12,6 +12,12 @@ public sealed class FakeMultipassService : IMultipassService
         Task.FromResult(sandboxes.GetValueOrDefault(instanceName));
     public Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<SandboxInfo>>(sandboxes.Values.ToArray());
+    public Task<SandboxResourceUsage> GetResourceUsageAsync(string instanceName, CancellationToken cancellationToken = default)
+    {
+        var sandbox = Require(instanceName);
+        if (sandbox.State != SandboxState.Running) throw new InvalidOperationException("Fake sandbox is not running.");
+        return Task.FromResult(new SandboxResourceUsage(18.5, 2L << 30, sandbox.Resources.MemoryGiB * (1L << 30), 12L << 30, sandbox.Resources.DiskGiB * (1L << 30), DateTimeOffset.UtcNow));
+    }
     public Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(string instanceName, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<SnapshotInfo>>(snapshots.Where(item => item.InstanceName == instanceName).ToArray());
 

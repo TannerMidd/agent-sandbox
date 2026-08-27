@@ -7,6 +7,37 @@ namespace AgentSandbox.Infrastructure;
 public sealed class MultipassService(IProcessRunner runner, IMultipassLocator locator) : IMultipassService
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(2);
+    private const string ResourceUsageScript = """
+        import json
+        import shutil
+        import time
+
+        def cpu_sample():
+            with open("/proc/stat", encoding="ascii") as source:
+                values = [int(value) for value in source.readline().split()[1:]]
+            return sum(values), values[3] + values[4]
+
+        total1, idle1 = cpu_sample()
+        time.sleep(0.2)
+        total2, idle2 = cpu_sample()
+        elapsed = max(total2 - total1, 1)
+        cpu_percent = max(0.0, min(100.0, (1.0 - ((idle2 - idle1) / elapsed)) * 100.0))
+
+        memory = {}
+        with open("/proc/meminfo", encoding="ascii") as source:
+            for line in source:
+                key, value = line.split(":", 1)
+                memory[key] = int(value.split()[0]) * 1024
+
+        disk = shutil.disk_usage("/")
+        print(json.dumps({
+            "cpuPercent": round(cpu_percent, 1),
+            "usedMemoryBytes": memory["MemTotal"] - memory["MemAvailable"],
+            "totalMemoryBytes": memory["MemTotal"],
+            "usedDiskBytes": disk.used,
+            "totalDiskBytes": disk.total
+        }))
+        """;
 
     public async Task<SandboxInfo?> GetSandboxAsync(string instanceName, CancellationToken cancellationToken = default)
     {
@@ -33,6 +64,29 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             sandboxes.Add(new SandboxInfo(name, state, new ResourceProfile(4, 4, 50), ipv4, null, DateTimeOffset.UtcNow));
         }
         return sandboxes;
+    }
+
+    public async Task<SandboxResourceUsage> GetResourceUsageAsync(string instanceName, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentifier(instanceName);
+        var result = await RunAsync(["exec", instanceName, "--", "python3", "-c", ResourceUsageScript], TimeSpan.FromSeconds(20), cancellationToken);
+        using var document = JsonDocument.Parse(result.StandardOutput);
+        var root = document.RootElement;
+        var cpuPercent = ReadRequiredDouble(root, "cpuPercent");
+        var usedMemoryBytes = ReadRequiredInt64(root, "usedMemoryBytes");
+        var totalMemoryBytes = ReadRequiredInt64(root, "totalMemoryBytes");
+        var usedDiskBytes = ReadRequiredInt64(root, "usedDiskBytes");
+        var totalDiskBytes = ReadRequiredInt64(root, "totalDiskBytes");
+        if (totalMemoryBytes == 0 || totalDiskBytes == 0)
+            throw new JsonException("The guest returned an invalid zero resource capacity.");
+
+        return new SandboxResourceUsage(
+            Math.Clamp(cpuPercent, 0, 100),
+            Math.Min(usedMemoryBytes, totalMemoryBytes),
+            totalMemoryBytes,
+            Math.Min(usedDiskBytes, totalDiskBytes),
+            totalDiskBytes,
+            DateTimeOffset.UtcNow);
     }
 
     public Task<OperationProgress> StartAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) =>
@@ -168,6 +222,20 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
     };
 
     private static string? ReadString(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static double ReadRequiredDouble(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value) || !value.TryGetDouble(out var result) || !double.IsFinite(result))
+            throw new JsonException($"Guest resource usage did not include a valid '{property}' value.");
+        return result;
+    }
+
+    private static long ReadRequiredInt64(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value) || !value.TryGetInt64(out var result) || result < 0)
+            throw new JsonException($"Guest resource usage did not include a valid '{property}' value.");
+        return result;
+    }
+
     private static string? ReadFirstString(JsonElement element, string property)
     {
         if (!element.TryGetProperty(property, out var value)) return null;

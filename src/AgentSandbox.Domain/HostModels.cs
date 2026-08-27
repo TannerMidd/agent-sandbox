@@ -73,3 +73,11 @@ public sealed record SnapshotInfo(
     DateTimeOffset? CreatedAt,
     string? Comment,
     bool IsBaseline);
+
+public sealed record SandboxResourceUsage(
+    double CpuPercent,
+    long UsedMemoryBytes,
+    long TotalMemoryBytes,
+    long UsedDiskBytes,
+    long TotalDiskBytes,
+    DateTimeOffset SampledAt);

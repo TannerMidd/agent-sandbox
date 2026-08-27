@@ -288,6 +288,8 @@ public sealed class SetupCoordinatorTests
             Task.FromResult(sandboxes.GetValueOrDefault(instanceName));
         public Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<SandboxInfo>>(sandboxes.Values.ToArray());
+        public Task<SandboxResourceUsage> GetResourceUsageAsync(string instanceName, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
         public Task<OperationProgress> StartAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> StopAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)

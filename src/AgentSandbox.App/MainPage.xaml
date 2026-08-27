@@ -50,16 +50,20 @@
                     <TextBlock Text="{x:Bind ViewModel.PageTitle, Mode=OneWay}" Style="{StaticResource TitleTextBlockStyle}" />
                     <TextBlock Text="Manage your isolated agent development environment" Opacity="0.58" Margin="0,3,0,0" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <ComboBox x:Name="SandboxPicker" Header="Active VM" MinWidth="190"
+                <Grid Grid.Column="1" ColumnSpacing="10" VerticalAlignment="Center">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Active VM" FontSize="12" Opacity="0.62" Margin="0,0,0,4" />
+                    <ComboBox x:Name="SandboxPicker" Grid.Row="1" MinWidth="190" VerticalAlignment="Stretch"
+                              AutomationProperties.Name="Active VM"
                               ItemsSource="{x:Bind ViewModel.Sandboxes}" DisplayMemberPath="InstanceName"
                               SelectionChanged="SandboxPicker_SelectionChanged" />
-                    <Button Content="New VM" Click="CreateSandbox_Click" />
-                    <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-                    <Button Command="{x:Bind ViewModel.RefreshSandboxCommand}" ToolTipService.ToolTip="Refresh status">
+                    <Button Grid.Row="1" Grid.Column="1" Content="New VM" Click="CreateSandbox_Click" VerticalAlignment="Stretch" />
+                    <ProgressRing Grid.Row="1" Grid.Column="2" Width="20" Height="20" VerticalAlignment="Center" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                    <Button Grid.Row="1" Grid.Column="3" Command="{x:Bind ViewModel.RefreshSandboxCommand}" ToolTipService.ToolTip="Refresh status" VerticalAlignment="Stretch">
                         <FontIcon Glyph="&#xE72C;" />
                     </Button>
-                </StackPanel>
+                </Grid>
             </Grid>
             <InfoBar Grid.Row="1" Margin="32,0,32,12" IsOpen="True" IsClosable="False" Severity="Error"
                      Visibility="{x:Bind ViewModel.ErrorVisibility, Mode=OneWay}" Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
@@ -126,11 +130,31 @@
                                         </InfoBar.ActionButton>
                                     </InfoBar>
                                     <Rectangle Height="1" Fill="{StaticResource CardBorderBrush}" />
-                                    <Grid ColumnSpacing="10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Resource usage" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ResourceUsageStatus, Mode=OneWay}" Opacity="0.55" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <Grid ColumnSpacing="18">
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
-                                        <StackPanel><TextBlock Text="CPU" Opacity="0.5" FontSize="12" /><TextBlock Text="{x:Bind ViewModel.CpuLabel, Mode=OneWay}" FontSize="18" FontWeight="SemiBold" /></StackPanel>
-                                        <StackPanel Grid.Column="1"><TextBlock Text="MEMORY" Opacity="0.5" FontSize="12" /><TextBlock Text="{x:Bind ViewModel.MemoryLabel, Mode=OneWay}" FontSize="18" FontWeight="SemiBold" /></StackPanel>
-                                        <StackPanel Grid.Column="2"><TextBlock Text="DISK" Opacity="0.5" FontSize="12" /><TextBlock Text="{x:Bind ViewModel.DiskLabel, Mode=OneWay}" FontSize="18" FontWeight="SemiBold" /></StackPanel>
+                                        <StackPanel Spacing="7">
+                                            <TextBlock Text="CPU" Opacity="0.55" FontSize="12" />
+                                            <TextBlock Text="{x:Bind ViewModel.CpuUsageLabel, Mode=OneWay}" FontSize="20" FontWeight="SemiBold" />
+                                            <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind ViewModel.CpuUsagePercent, Mode=OneWay}" Height="6" Visibility="{x:Bind ViewModel.ResourceUsageBarsVisibility, Mode=OneWay}" AutomationProperties.Name="CPU usage" />
+                                            <TextBlock Text="{x:Bind ViewModel.CpuLabel, Mode=OneWay}" FontSize="12" Opacity="0.58" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="7">
+                                            <TextBlock Text="MEMORY" Opacity="0.55" FontSize="12" />
+                                            <TextBlock Text="{x:Bind ViewModel.MemoryUsageLabel, Mode=OneWay}" FontSize="20" FontWeight="SemiBold" />
+                                            <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind ViewModel.MemoryUsagePercent, Mode=OneWay}" Height="6" Visibility="{x:Bind ViewModel.ResourceUsageBarsVisibility, Mode=OneWay}" AutomationProperties.Name="Memory usage" />
+                                            <TextBlock Text="{x:Bind ViewModel.MemoryLabel, Mode=OneWay}" FontSize="12" Opacity="0.58" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Spacing="7">
+                                            <TextBlock Text="DISK" Opacity="0.55" FontSize="12" />
+                                            <TextBlock Text="{x:Bind ViewModel.DiskUsageLabel, Mode=OneWay}" FontSize="20" FontWeight="SemiBold" />
+                                            <ProgressBar Minimum="0" Maximum="100" Value="{x:Bind ViewModel.DiskUsagePercent, Mode=OneWay}" Height="6" Visibility="{x:Bind ViewModel.ResourceUsageBarsVisibility, Mode=OneWay}" AutomationProperties.Name="Disk usage" />
+                                            <TextBlock Text="{x:Bind ViewModel.DiskLabel, Mode=OneWay}" FontSize="12" Opacity="0.58" />
+                                        </StackPanel>
                                     </Grid>
                                 </StackPanel>
                             </Border>
