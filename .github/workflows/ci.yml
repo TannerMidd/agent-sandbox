@@ -9,7 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  guest-helper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test guest helper on its Linux target platform
+        run: python tests/guest_helper_tests.py
+
   build-and-test:
+    needs: guest-helper
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6
@@ -18,9 +29,6 @@ jobs:
           dotnet-version: 10.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
       - name: Restore
         run: dotnet restore AgentSandbox.slnx --configfile NuGet.Config
       - name: Build application
@@ -33,8 +41,6 @@ jobs:
           dotnet test tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj --configuration Release --no-restore -p:CI=true
           dotnet test tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj --configuration Release --no-restore -p:CI=true
           dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --configuration Release --no-restore -p:CI=true
-      - name: Test guest helper
-        run: python tests/guest_helper_tests.py
       - name: Publish x64 app and helper
         run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:PublishDir=${{ github.workspace }}\artifacts\publish\
       - name: Install pinned WinAppDriver
