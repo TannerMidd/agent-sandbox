@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import base64
-import fcntl
+import contextlib
 import hashlib
 import json
 import os
@@ -32,6 +32,31 @@ STAGING = CONTROL / "staging"
 REPLACEMENTS = STAGING / "replacements"
 REQUESTS = pathlib.Path(os.environ.get("AGENT_SANDBOX_TEST_REQUESTS", "/home/ubuntu/.local/lib/agent-sandbox/requests"))
 MAX_REQUEST = 8 * 1024 * 1024
+
+
+@contextlib.contextmanager
+def exclusive_file_lock(stream):
+    """Use the platform's process-wide advisory file lock (Linux in guests, Windows in CI)."""
+    if os.name == "nt":
+        import msvcrt
+        stream.seek(0)
+        if stream.read(1) == b"":
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 class ProtocolError(Exception):
@@ -528,8 +553,7 @@ def main() -> int:
     request = {}
     try:
         ensure_control_directory(CONTROL)
-        with (CONTROL / "helper.lock").open("a+b") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with (CONTROL / "helper.lock").open("a+b") as lock, exclusive_file_lock(lock):
             request = read_request()
             recover_replacements()
             cleanup_staging()
