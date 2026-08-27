@@ -19,12 +19,14 @@ public sealed partial class MainPage : Page
 {
     private bool settingsLoaded;
     private bool updatingSandboxPicker;
+    private readonly DispatcherTimer resourceUsageTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public MainPageViewModel ViewModel { get; } = new();
 
     public MainPage()
     {
         InitializeComponent();
+        resourceUsageTimer.Tick += ResourceUsageTimer_Tick;
         ViewModel.SetupRequested += async (_, _) => await ShowSetupAsync();
     }
 
@@ -33,10 +35,17 @@ public sealed partial class MainPage : Page
         await ViewModel.InitializeCommand.ExecuteAsync(null);
         SelectCurrentSandboxInPicker();
         LoadSettingsControls();
+        resourceUsageTimer.Start();
         await ShowAvailableReleaseAsync(force: false);
     }
 
-    private void Page_Unloaded(object sender, RoutedEventArgs e) => ViewModel.Dispose();
+    private async void ResourceUsageTimer_Tick(object? sender, object e) => await ViewModel.RefreshResourceUsageAsync();
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e)
+    {
+        resourceUsageTimer.Stop();
+        ViewModel.Dispose();
+    }
 
     private void ShellNavigation_Loaded(object sender, RoutedEventArgs e)
     {

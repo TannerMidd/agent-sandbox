@@ -19,3 +19,5 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Added a visible guest connection check and fixed Windows Terminal launch through the per-user execution alias.
 - Replaced redirected-stdin guest requests with bounded, one-shot request files because Multipass on Windows could leave the helper waiting indefinitely.
 - Made the dashboard summary responsive so connection and terminal controls remain usable at high display scaling and minimum window width.
+- Aligned the active-VM picker with its adjacent dashboard actions.
+- Added live CPU, memory, and disk usage visuals for the active running VM.

@@ -24,6 +24,7 @@ public interface IMultipassService
 {
     Task<SandboxInfo?> GetSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default);
+    Task<SandboxResourceUsage> GetResourceUsageAsync(string instanceName, CancellationToken cancellationToken = default);
     Task<OperationProgress> StartAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<OperationProgress> StopAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);

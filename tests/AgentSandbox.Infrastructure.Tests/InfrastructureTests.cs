@@ -9,6 +9,7 @@ public sealed class InfrastructureTests
 {
     private static readonly string[] ExactDeleteArguments = ["delete", "--purge", "agent-sandbox"];
     private static readonly string[] GlobalPurgeArguments = ["purge"];
+    private static readonly string[] ResourceUsageArgumentsPrefix = ["exec", "agent-dev", "--", "python3", "-c"];
 
     [Fact]
     public async Task SettingsAreWrittenAtomicallyAndRoundTrip()
@@ -81,6 +82,34 @@ public sealed class InfrastructureTests
         Assert.Equal("agent-dev", sandbox.InstanceName);
         Assert.Equal(SandboxState.Stopped, sandbox.State);
         Assert.Null(sandbox.IPv4Address);
+    }
+
+    [Fact]
+    public async Task RunningSandboxResourceUsageIsParsedFromGuestMetrics()
+    {
+        var runner = new ScriptedRunner(new ProcessResult(0,
+            "{\"cpuPercent\":37.5,\"usedMemoryBytes\":2147483648,\"totalMemoryBytes\":4294967296,\"usedDiskBytes\":10737418240,\"totalDiskBytes\":53687091200}", ""));
+        var service = new MultipassService(runner, new FixedLocator());
+
+        var usage = await service.GetResourceUsageAsync("agent-dev");
+
+        Assert.Equal(37.5, usage.CpuPercent);
+        Assert.Equal(2L << 30, usage.UsedMemoryBytes);
+        Assert.Equal(4L << 30, usage.TotalMemoryBytes);
+        Assert.Equal(10L << 30, usage.UsedDiskBytes);
+        Assert.Equal(50L << 30, usage.TotalDiskBytes);
+        Assert.Equal(ResourceUsageArgumentsPrefix, runner.Calls[0].Take(5));
+        Assert.Contains("/proc/stat", runner.Calls[0][5], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GuestResourceUsageRejectsZeroCapacity()
+    {
+        var runner = new ScriptedRunner(new ProcessResult(0,
+            "{\"cpuPercent\":0,\"usedMemoryBytes\":0,\"totalMemoryBytes\":0,\"usedDiskBytes\":0,\"totalDiskBytes\":1}", ""));
+        var service = new MultipassService(runner, new FixedLocator());
+
+        await Assert.ThrowsAsync<JsonException>(() => service.GetResourceUsageAsync("agent-dev"));
     }
 
     [Fact]

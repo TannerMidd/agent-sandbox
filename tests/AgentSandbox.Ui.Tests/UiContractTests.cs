@@ -39,7 +39,27 @@ public sealed class UiContractTests
         Assert.Contains("Active VM", text, StringComparison.Ordinal);
         Assert.Contains("New VM", text, StringComparison.Ordinal);
         Assert.Contains("Delete VM…", text, StringComparison.Ordinal);
+        Assert.Contains("Resource usage", text, StringComparison.Ordinal);
+        Assert.Contains("CpuUsagePercent", text, StringComparison.Ordinal);
+        Assert.Contains("MemoryUsagePercent", text, StringComparison.Ordinal);
+        Assert.Contains("DiskUsagePercent", text, StringComparison.Ordinal);
+        Assert.Contains("ResourceUsageBarsVisibility", text, StringComparison.Ordinal);
         Assert.Contains("AdaptiveTrigger MinWindowWidth=\"900\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VmToolbarControlsShareTheSameGridRow()
+    {
+        var document = XDocument.Load(RepoFile("src", "AgentSandbox.App", "MainPage.xaml"));
+        XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var picker = document.Descendants(xaml + "ComboBox").Single(element => element.Attribute(x + "Name")?.Value == "SandboxPicker");
+        var newVm = document.Descendants(xaml + "Button").Single(element => element.Attribute("Content")?.Value == "New VM");
+
+        Assert.Equal("1", picker.Attribute("Grid.Row")?.Value);
+        Assert.Equal("1", newVm.Attribute("Grid.Row")?.Value);
+        Assert.Equal("Stretch", picker.Attribute("VerticalAlignment")?.Value);
+        Assert.Equal("Stretch", newVm.Attribute("VerticalAlignment")?.Value);
     }
 
     [Fact]

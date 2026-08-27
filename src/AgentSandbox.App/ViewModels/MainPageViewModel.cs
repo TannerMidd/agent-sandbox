@@ -23,6 +23,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     private string guestRootId = GuestRoots.Work;
     private string guestQuery = "";
     private bool showHiddenGuest;
+    private bool resourceRefreshInProgress;
+    private bool disposed;
+    private readonly CancellationTokenSource resourceUsageCancellation = new();
     private CancellationTokenSource? transferCancellation;
 
     [ObservableProperty] public partial string PageTitle { get; set; } = "Dashboard";
@@ -42,6 +45,14 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string CpuLabel { get; set; } = "—";
     [ObservableProperty] public partial string MemoryLabel { get; set; } = "—";
     [ObservableProperty] public partial string DiskLabel { get; set; } = "—";
+    [ObservableProperty] public partial string CpuUsageLabel { get; set; } = "—";
+    [ObservableProperty] public partial string MemoryUsageLabel { get; set; } = "—";
+    [ObservableProperty] public partial string DiskUsageLabel { get; set; } = "—";
+    [ObservableProperty] public partial double CpuUsagePercent { get; set; }
+    [ObservableProperty] public partial double MemoryUsagePercent { get; set; }
+    [ObservableProperty] public partial double DiskUsagePercent { get; set; }
+    [ObservableProperty] public partial Visibility ResourceUsageBarsVisibility { get; set; } = Visibility.Collapsed;
+    [ObservableProperty] public partial string ResourceUsageStatus { get; set; } = "Start the VM to view live usage.";
     [ObservableProperty] public partial string OperationLabel { get; set; } = "No active operation";
     [ObservableProperty] public partial bool HasActiveTransfer { get; set; }
     [ObservableProperty] public partial string GuestConnectionStatus { get; set; } = "Connection not tested";
@@ -82,6 +93,28 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     public async Task RefreshSandboxAsync()
     {
         await RunBusyAsync(RefreshSandboxCoreAsync);
+    }
+
+    public async Task RefreshResourceUsageAsync()
+    {
+        if (disposed || resourceRefreshInProgress || IsBusy) return;
+        resourceRefreshInProgress = true;
+        var instanceName = settings.InstanceName;
+        var cancellationToken = resourceUsageCancellation.Token;
+        try
+        {
+            var sandbox = await services.Multipass.GetSandboxAsync(instanceName, cancellationToken);
+            await RefreshResourceUsageCoreAsync(sandbox, instanceName, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch
+        {
+            if (IsActiveInstance(instanceName)) SetResourceUsageUnavailable("Usage temporarily unavailable • Refresh to retry.");
+        }
+        finally
+        {
+            resourceRefreshInProgress = false;
+        }
     }
 
     [RelayCommand] public Task StartAsync() => RunOperationAsync(() => services.Multipass.StartAsync(settings.InstanceName), "Starting sandbox");
@@ -282,32 +315,48 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     public async Task UploadAsync(IReadOnlyList<string> hostPaths, FileConflictPolicy conflict = FileConflictPolicy.Fail)
     {
         if (guestRootId != GuestRoots.Work) throw new UnauthorizedAccessException("Uploads are limited to the guest workspace.");
-        transferCancellation?.Dispose(); transferCancellation = new CancellationTokenSource(); HasActiveTransfer = true;
+        transferCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        transferCancellation = cancellation;
+        HasActiveTransfer = true;
         try
         {
             var progress = new Progress<OperationProgress>(item => OperationLabel = item.Phase);
-            var job = await services.CreateGuestFiles(settings.InstanceName).UploadAsync(hostPaths, guestPathComponents, conflict, progress, transferCancellation.Token);
+            var job = await services.CreateGuestFiles(settings.InstanceName).UploadAsync(hostPaths, guestPathComponents, conflict, progress, cancellation.Token);
             AddTransfer(job);
             await services.History.AppendAsync(TransferProgress(job, "Upload files"));
             await LoadGuestFilesCoreAsync();
         }
-        finally { HasActiveTransfer = false; transferCancellation.Dispose(); transferCancellation = null; }
+        finally
+        {
+            HasActiveTransfer = false;
+            if (ReferenceEquals(transferCancellation, cancellation)) transferCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
     public async Task DownloadAsync(IReadOnlyList<GuestFileEntry> entries, string hostDestination, FileConflictPolicy conflict = FileConflictPolicy.Fail)
     {
         if (guestRootId != GuestRoots.Work) throw new UnauthorizedAccessException("Use the text viewer for read-only system files; bulk transfer is workspace-only.");
         var paths = entries.Select(item => (IReadOnlyList<string>)guestPathComponents.Concat([item.Name]).ToArray()).ToArray();
-        transferCancellation?.Dispose(); transferCancellation = new CancellationTokenSource(); HasActiveTransfer = true;
+        transferCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        transferCancellation = cancellation;
+        HasActiveTransfer = true;
         try
         {
             var progress = new Progress<OperationProgress>(item => OperationLabel = item.Phase);
-            var job = await services.CreateGuestFiles(settings.InstanceName).DownloadAsync(paths, hostDestination, conflict, progress, transferCancellation.Token);
+            var job = await services.CreateGuestFiles(settings.InstanceName).DownloadAsync(paths, hostDestination, conflict, progress, cancellation.Token);
             AddTransfer(job);
             await services.History.AppendAsync(TransferProgress(job, "Download files"));
             NavigateHost(hostDestination);
         }
-        finally { HasActiveTransfer = false; transferCancellation.Dispose(); transferCancellation = null; }
+        finally
+        {
+            HasActiveTransfer = false;
+            if (ReferenceEquals(transferCancellation, cancellation)) transferCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
     [RelayCommand]
@@ -409,10 +458,56 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
 
     private void ApplyResourceLabels()
     {
-        CpuLabel = $"{settings.Resources.CpuCount} vCPU";
-        MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
-        DiskLabel = $"{settings.Resources.DiskGiB} GiB";
+        CpuLabel = $"{settings.Resources.CpuCount} vCPU allocated";
+        MemoryLabel = $"{settings.Resources.MemoryGiB} GiB allocated";
+        DiskLabel = $"{settings.Resources.DiskGiB} GiB allocated";
     }
+
+    private async Task RefreshResourceUsageCoreAsync(SandboxInfo? sandbox, string instanceName, CancellationToken cancellationToken)
+    {
+        if (!IsActiveInstance(instanceName)) return;
+        if (sandbox?.State != SandboxState.Running)
+        {
+            SetResourceUsageUnavailable(sandbox is null ? "Usage unavailable until a VM is provisioned." : "Start the VM to view live usage.");
+            return;
+        }
+
+        try
+        {
+            var usage = await services.Multipass.GetResourceUsageAsync(sandbox.InstanceName, cancellationToken);
+            if (!IsActiveInstance(instanceName) || cancellationToken.IsCancellationRequested) return;
+            CpuUsagePercent = usage.CpuPercent;
+            MemoryUsagePercent = Percentage(usage.UsedMemoryBytes, usage.TotalMemoryBytes);
+            DiskUsagePercent = Percentage(usage.UsedDiskBytes, usage.TotalDiskBytes);
+            CpuUsageLabel = $"{usage.CpuPercent:F0}%";
+            MemoryUsageLabel = $"{FormatSize(usage.UsedMemoryBytes)} / {FormatSize(usage.TotalMemoryBytes)}";
+            DiskUsageLabel = $"{FormatSize(usage.UsedDiskBytes)} / {FormatSize(usage.TotalDiskBytes)}";
+            ResourceUsageBarsVisibility = Visibility.Visible;
+            ResourceUsageStatus = $"Live usage • Updated {usage.SampledAt.ToLocalTime():t}";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch
+        {
+            if (IsActiveInstance(instanceName)) SetResourceUsageUnavailable("Usage temporarily unavailable • Refresh to retry.");
+        }
+    }
+
+    private bool IsActiveInstance(string instanceName) =>
+        !disposed && string.Equals(instanceName, settings.InstanceName, StringComparison.Ordinal);
+
+    private void SetResourceUsageUnavailable(string status)
+    {
+        CpuUsagePercent = 0;
+        MemoryUsagePercent = 0;
+        DiskUsagePercent = 0;
+        CpuUsageLabel = "—";
+        MemoryUsageLabel = "—";
+        DiskUsageLabel = "—";
+        ResourceUsageBarsVisibility = Visibility.Collapsed;
+        ResourceUsageStatus = status;
+    }
+
+    private static double Percentage(long used, long total) => total <= 0 ? 0 : Math.Clamp(used * 100d / total, 0, 100);
 
     private async Task LoadGuestFilesCoreAsync()
     {
@@ -481,18 +576,22 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
 
     private async Task RefreshSandboxCoreAsync()
     {
+        var instanceName = settings.InstanceName;
         SandboxInfo? sandbox;
         try
         {
-            sandbox = await services.Multipass.GetSandboxAsync(settings.InstanceName);
+            sandbox = await services.Multipass.GetSandboxAsync(instanceName);
         }
         catch (FileNotFoundException) when (!settings.IsReady)
         {
             sandbox = null;
         }
+        if (!IsActiveInstance(instanceName)) return;
         SandboxStatus = sandbox?.State.ToString() ?? "Not provisioned";
         CanOperateSandbox = sandbox is not null;
         SandboxDetail = sandbox is null ? "Complete setup to create the Ubuntu 24.04 development VM." : $"{sandbox.InstanceName} • Ubuntu {sandbox.UbuntuRelease ?? "24.04"} • {sandbox.IPv4Address ?? "No IP yet"}";
+        await RefreshResourceUsageCoreAsync(sandbox, instanceName, resourceUsageCancellation.Token);
+        if (!IsActiveInstance(instanceName)) return;
         if (sandbox is null)
         {
             GuestConnectionStatus = "Not connected";
@@ -598,9 +697,13 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        if (disposed) return;
+        disposed = true;
+        resourceUsageCancellation.Cancel();
         transferCancellation?.Cancel();
         transferCancellation?.Dispose();
         transferCancellation = null;
+        resourceUsageCancellation.Dispose();
         GC.SuppressFinalize(this);
     }
 }
