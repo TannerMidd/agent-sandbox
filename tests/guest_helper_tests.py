@@ -60,6 +60,7 @@ class GuestHelperTests(unittest.TestCase):
         for number in range(230): (self.root / f"item-{number:03}.txt").touch()
         first = self.call(pageSize=200)
         self.assertEqual(200, len(first["entries"]))
+        self.assertNotIn(".agent-sandbox", {item["name"] for item in first["entries"]})
         self.assertIsNotNone(first["nextCursor"])
         second = self.call(pageSize=200, cursor=first["nextCursor"])
         self.assertEqual(30, len(second["entries"]))

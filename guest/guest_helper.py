@@ -204,7 +204,8 @@ def handle(request: dict) -> dict:
         ensure_regular(path, directory_ok=True)
         if not path.is_dir(): raise ProtocolError("NOT_DIRECTORY", "The requested path is not a directory.")
         query = str(request.get("content") or "").casefold()
-        items = sorted((p for p in path.iterdir() if not (path == WORK_ROOT and p == CONTROL) and (operation == "list" or query in p.name.casefold())), key=lambda p: (not p.is_dir(), p.name.casefold(), p.name))
+        is_workspace_root = root_id == "work" and not parts
+        items = sorted((p for p in path.iterdir() if not (is_workspace_root and p.name == CONTROL.name) and (operation == "list" or query in p.name.casefold())), key=lambda p: (not p.is_dir(), p.name.casefold(), p.name))
         rev = revision(items)
         expected_rev, offset = cursor_decode(request.get("cursor"))
         if expected_rev is not None and expected_rev != rev: raise ProtocolError("LISTING_CHANGED", "The directory changed; refresh the listing.")
