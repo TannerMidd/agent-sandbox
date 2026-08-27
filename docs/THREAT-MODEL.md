@@ -17,6 +17,9 @@ It is not intended to contain kernel exploits, malicious hypervisor escape resea
 ## Controls
 
 - No host credential forwarding or persistent mounts.
+- Every provisioned VM denies unsolicited inbound traffic and disables SSH password authentication, root login, forwarding, and X11 forwarding.
+- Per-VM hardening ranges from a compatibility profile through automatic updates/kernel/audit safeguards to web-only or offline egress and removal of passwordless sudo/Docker-socket access. Custom combinations are explicit and persisted.
+- Offline egress cannot be combined with remote agent presets; contradictory automatic-update/offline configurations fail before launch.
 - No arbitrary commands accepted by the elevated helper.
 - Pinned installer hash plus publisher certificate validation.
 - Catalog image allow-list; advanced custom images require credential-free HTTPS and reject loopback hosts.
@@ -32,6 +35,8 @@ It is not intended to contain kernel exploits, malicious hypervisor escape resea
 
 - Hyper-V and Multipass defects can cross the intended boundary.
 - Downloaded files can harm Windows when opened by another application.
+- Development and Balanced profiles permit unrestricted guest egress. Web-only filtering is port-based rather than destination allow-listing, so HTTPS endpoints remain reachable; guest administrators can change guest policy when administrative tools are enabled.
+- Restricted kernel settings can break debuggers, unprivileged containers, and tools that need user namespaces or BPF. Offline mode prevents agent sign-in, APIs, package downloads, and security updates.
 - Agent CLIs communicate with their providers and are governed by those providers' policies.
 - npm, Node.js, and the selected distribution's image/package infrastructure remain external supply-chain dependencies; a user-supplied custom image is trusted guest input and is not app-side digest verified.
 - Unsigned preview installers can be replaced unless users verify hashes and attestations from the canonical release.

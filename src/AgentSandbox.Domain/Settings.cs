@@ -8,7 +8,8 @@ public sealed record SandboxConfiguration(
     IReadOnlyList<string> SelectedPresetIds,
     bool ImportedLegacyInstance = false,
     string ImageId = LinuxImages.DefaultId,
-    string? CustomImageUrl = null);
+    string? CustomImageUrl = null,
+    SandboxHardeningOptions? Hardening = null);
 
 public sealed record AgentSandboxSettings
 {
@@ -21,6 +22,7 @@ public sealed record AgentSandboxSettings
     public ResourceProfile Resources { get; init; } = new(4, 4, 50);
     public string ImageId { get; init; } = LinuxImages.DefaultId;
     public string? CustomImageUrl { get; init; }
+    public SandboxHardeningOptions Hardening { get; init; } = SandboxHardeningOptions.Development;
     public string? StoragePath { get; init; }
     public string Theme { get; init; } = "System";
     public bool ReducedMotion { get; init; }

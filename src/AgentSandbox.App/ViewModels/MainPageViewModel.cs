@@ -61,6 +61,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SandboxConfiguration> Sandboxes { get; } = [];
     public IReadOnlyList<LinuxImage> LinuxImageOptions => LinuxImages.All;
+    public IReadOnlyList<HardeningPreset> HardeningPresetOptions => HardeningPresets.All;
     public ObservableCollection<HostFileItem> HostEntries { get; } = [];
     public ObservableCollection<GuestFileEntry> GuestEntries { get; } = [];
     public ObservableCollection<SnapshotInfo> Snapshots { get; } = [];
@@ -215,9 +216,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         await ReloadSetupAsync();
     }
 
-    public async Task ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null)
+    public async Task ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, SandboxHardeningOptions hardening, IProgress<OperationProgress>? progress = null)
     {
-        var result = await services.Lifecycle.ProvisionAsync(instanceName, imageId, customImageUrl, resources, presetIds, progress);
+        var result = await services.Lifecycle.ProvisionAsync(instanceName, imageId, customImageUrl, resources, presetIds, hardening, progress);
         await services.History.AppendAsync(result);
         OperationLabel = result.Phase;
         await ReloadSetupAsync();
@@ -249,7 +250,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         var configuration = settings.Sandboxes.Single(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
         await DeleteSandboxAsync(instanceName);
-        await ProvisionAsync(configuration.InstanceName, configuration.ImageId, configuration.CustomImageUrl, configuration.Resources, configuration.SelectedPresetIds);
+        await ProvisionAsync(configuration.InstanceName, configuration.ImageId, configuration.CustomImageUrl, configuration.Resources, configuration.SelectedPresetIds, configuration.Hardening ?? SandboxHardeningOptions.Development);
     }
 
     public async Task SavePreferencesAsync(string theme, bool reducedMotion, bool updates, bool advancedBrowsing, string? releaseRepository = null)
@@ -591,9 +592,10 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SandboxStatus = sandbox?.State.ToString() ?? "Not provisioned";
         CanOperateSandbox = sandbox is not null;
         var configuredImage = LinuxImages.GetRequired(settings.ImageId);
+        var hardeningName = HardeningPresets.Describe(settings.Hardening);
         SandboxDetail = sandbox is null
-            ? $"Complete setup to create the {configuredImage.DisplayName} development VM."
-            : $"{sandbox.InstanceName} • {sandbox.OsRelease ?? configuredImage.DisplayName} • {sandbox.IPv4Address ?? "No IP yet"}";
+            ? $"Complete setup to create the {configuredImage.DisplayName} development VM with {hardeningName.ToLowerInvariant()}."
+            : $"{sandbox.InstanceName} • {sandbox.OsRelease ?? configuredImage.DisplayName} • {hardeningName} • {sandbox.IPv4Address ?? "No IP yet"}";
         await RefreshResourceUsageCoreAsync(sandbox, instanceName, resourceUsageCancellation.Token);
         if (!IsActiveInstance(instanceName)) return;
         if (sandbox is null)

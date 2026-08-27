@@ -177,6 +177,36 @@ public sealed class SetupCoordinatorTests
     }
 
     [Fact]
+    public async Task SelectedHardeningIsProvisionedAndPersistedPerVm()
+    {
+        var store = new MemorySettings();
+        var multipass = new FakeMultipass();
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+        var hardening = HardeningPresets.GetRequired(HardeningPresets.RestrictedId).Options;
+
+        await coordinator.ProvisionAsync("agent-sandbox-restricted", LinuxImages.DefaultId, null, new ResourceProfile(2, 4, 30), [], hardening);
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(hardening, multipass.LastProvisionRequest?.Hardening);
+        Assert.Equal(hardening, settings.Hardening);
+        Assert.Equal(hardening, Assert.Single(settings.Sandboxes).Hardening);
+    }
+
+    [Fact]
+    public async Task OfflineHardeningRejectsAgentPresetsBeforeProvisioning()
+    {
+        var multipass = new FakeMultipass();
+        var coordinator = new SetupCoordinator(new MemorySettings(), new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+        var hardening = HardeningPresets.GetRequired(HardeningPresets.OfflineId).Options;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.ProvisionAsync(
+            "agent-sandbox-offline", LinuxImages.DefaultId, null, new ResourceProfile(2, 4, 30), ["codex"], hardening));
+
+        Assert.Contains("Offline hardening", exception.Message, StringComparison.Ordinal);
+        Assert.Null(multipass.LastProvisionRequest);
+    }
+
+    [Fact]
     public async Task UnknownLinuxImageIsRejectedBeforeProvisioning()
     {
         var coordinator = new SetupCoordinator(new MemorySettings(), new FakePrerequisites(), new FakeMultipass(), new FakePresets(), freeDiskBytes: _ => 100L << 30);

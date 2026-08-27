@@ -68,7 +68,7 @@ public sealed class SetupCoordinator(
             throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before importing another VM.");
         if (settings.Sandboxes.Any(item => item.InstanceName == candidate.InstanceName))
             throw new InvalidOperationException("The legacy instance is already managed.");
-        var configuration = new SandboxConfiguration(candidate.InstanceName, current.Resources, [], true);
+        var configuration = new SandboxConfiguration(candidate.InstanceName, current.Resources, [], true, Hardening: SandboxHardeningOptions.Development);
         settings = UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with { SetupState = SetupState.Ready };
         await settingsStore.SaveAsync(settings, cancellationToken);
         return settings;
@@ -104,16 +104,31 @@ public sealed class SetupCoordinator(
         CancellationToken cancellationToken = default) =>
         ProvisionAsync(instanceName, imageId, null, resources, presetIds, progress, cancellationToken);
 
-    public async Task<OperationProgress> ProvisionAsync(
+    public Task<OperationProgress> ProvisionAsync(
         string instanceName,
         string imageId,
         string? customImageUrl,
         ResourceProfile resources,
         IReadOnlyList<string> presetIds,
         IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        ProvisionAsync(instanceName, imageId, customImageUrl, resources, presetIds, SandboxHardeningOptions.Development, progress, cancellationToken);
+
+    public async Task<OperationProgress> ProvisionAsync(
+        string instanceName,
+        string imageId,
+        string? customImageUrl,
+        ResourceProfile resources,
+        IReadOnlyList<string> presetIds,
+        SandboxHardeningOptions hardening,
+        IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ValidateInstanceName(instanceName);
+        ArgumentNullException.ThrowIfNull(hardening);
+        hardening.Validate();
+        if (hardening.NetworkAccess == NetworkAccessPolicy.Offline && presetIds.Count > 0)
+            throw new InvalidOperationException("Offline hardening cannot be combined with agent presets because preset installation requires registry access.");
         var image = LinuxImages.GetRequired(imageId);
         var imageReference = LinuxImages.ResolveReference(imageId, customImageUrl);
         var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
@@ -133,7 +148,7 @@ public sealed class SetupCoordinator(
             throw new InvalidOperationException(string.Join(Environment.NewLine, validationErrors));
 
         var initialProvision = settings.Sandboxes.Count == 0;
-        var request = new ProvisionRequest(instanceName, imageReference, resources, cloudInitPath, "clean", image.IsUserSupplied);
+        var request = new ProvisionRequest(instanceName, imageReference, resources, cloudInitPath, "clean", image.IsUserSupplied, hardening);
         if (initialProvision)
         {
             settings = settings with
@@ -141,6 +156,7 @@ public sealed class SetupCoordinator(
                 InstanceName = instanceName,
                 ImageId = image.Id,
                 CustomImageUrl = image.IsUserSupplied ? imageReference : null,
+                Hardening = hardening,
                 Resources = resources,
                 SelectedPresetIds = presetIds,
                 SetupState = SetupState.Provisioning
@@ -148,7 +164,7 @@ public sealed class SetupCoordinator(
             await settingsStore.SaveAsync(settings, cancellationToken);
         }
 
-        var configuration = new SandboxConfiguration(instanceName, resources, [], ImageId: image.Id, CustomImageUrl: image.IsUserSupplied ? imageReference : null);
+        var configuration = new SandboxConfiguration(instanceName, resources, [], ImageId: image.Id, CustomImageUrl: image.IsUserSupplied ? imageReference : null, Hardening: hardening);
         var provisionResult = await multipass.ProvisionAsync(request, progress, cancellationToken);
         if (provisionResult.State != OperationState.Succeeded)
         {
@@ -216,6 +232,7 @@ public sealed class SetupCoordinator(
                 Resources = new ResourceProfile(4, 4, 50),
                 ImageId = LinuxImages.DefaultId,
                 CustomImageUrl = null,
+                Hardening = SandboxHardeningOptions.Development,
                 SelectedPresetIds = [],
                 SetupState = SetupState.ResourceConfiguration
             }
@@ -258,8 +275,23 @@ public sealed class SetupCoordinator(
     private async Task<AgentSandboxSettings> NormalizeAsync(AgentSandboxSettings settings, CancellationToken cancellationToken)
     {
         _ = LinuxImages.ResolveReference(settings.ImageId, settings.CustomImageUrl);
+        ArgumentNullException.ThrowIfNull(settings.Hardening);
+        settings.Hardening.Validate();
+        if (settings.Sandboxes.Any(configuration => configuration.Hardening is null))
+        {
+            settings = settings with
+            {
+                Sandboxes = settings.Sandboxes.Select(configuration => configuration.Hardening is null
+                    ? configuration with { Hardening = SandboxHardeningOptions.Development }
+                    : configuration).ToArray()
+            };
+            await settingsStore.SaveAsync(settings, cancellationToken);
+        }
         foreach (var configuration in settings.Sandboxes)
+        {
             _ = LinuxImages.ResolveReference(configuration.ImageId, configuration.CustomImageUrl);
+            configuration.Hardening!.Validate();
+        }
         var interrupted = settings.SetupState is SetupState.Provisioning or SetupState.InstallingPresets;
         if (settings.Sandboxes.Count > 0 && interrupted)
         {
@@ -277,7 +309,8 @@ public sealed class SetupCoordinator(
                     interrupted ? [] : settings.SelectedPresetIds,
                     settings.ImportedLegacyInstance,
                     settings.ImageId,
-                    settings.CustomImageUrl);
+                    settings.CustomImageUrl,
+                    settings.Hardening);
                 settings = UpdateActive(settings with { Sandboxes = [configuration] }, configuration) with
                 {
                     SetupState = interrupted ? SetupState.NeedsReview : settings.SetupState
@@ -305,6 +338,7 @@ public sealed class SetupCoordinator(
         Resources = configuration.Resources,
         ImageId = configuration.ImageId,
         CustomImageUrl = configuration.CustomImageUrl,
+        Hardening = configuration.Hardening ?? SandboxHardeningOptions.Development,
         SelectedPresetIds = configuration.SelectedPresetIds
     };
 

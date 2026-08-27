@@ -10,6 +10,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Added safe Multipass discovery and lifecycle operations.
 - Added user-named multi-VM creation, selection, lifecycle, files, snapshots, rebuild, and exact-target deletion.
 - Added per-VM Linux image selection for Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, Alpine 3.22, and advanced custom HTTPS cloud images with image-aware resources and cross-distro provisioning.
+- Added Development, Balanced, Restricted, Offline, and custom per-VM hardening during setup, including configurable automatic updates, kernel and unprivileged-feature safeguards, audit rules, outbound network policy, and administrative/Docker access.
 - Added a daemonless Python guest helper with paged listings, text editing, trash/restore, permissions, archives, and strict path controls.
 - Added a professional dark dashboard, dual-pane file workspace, recovery, diagnostics, and settings views.
 - Replaced the placeholder Windows artwork with a branded multi-resolution app, taskbar, tile, and splash icon set.

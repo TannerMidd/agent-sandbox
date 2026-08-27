@@ -54,6 +54,39 @@ public sealed class SafetyPolicyTests
         Assert.Empty(new ResourceProfile(1, 1, 10).Validate(8, 16L << 30, 100L << 30, alpine.MinimumResources));
     }
 
+    [Fact]
+    public void HardeningCatalogOffersACompatibilityToOfflineRange()
+    {
+        Assert.Equal(4, HardeningPresets.All.Count);
+        Assert.Equal(HardeningPresets.All.Count, HardeningPresets.All.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.True(HardeningPresets.GetRequired(HardeningPresets.BalancedId).IsRecommended);
+        Assert.Equal(NetworkAccessPolicy.Unrestricted, HardeningPresets.GetRequired(HardeningPresets.DevelopmentId).Options.NetworkAccess);
+        var offline = HardeningPresets.GetRequired(HardeningPresets.OfflineId).Options;
+        Assert.Equal(NetworkAccessPolicy.Offline, offline.NetworkAccess);
+        Assert.False(offline.AllowAdministrativeTools);
+        Assert.False(offline.AutomaticSecurityUpdates);
+    }
+
+    [Fact]
+    public void NamedPresetCannotMisrepresentModifiedOptions()
+    {
+        var mislabeled = HardeningPresets.GetRequired(HardeningPresets.BalancedId).Options with { KernelHardening = false };
+        var exception = Assert.Throws<ArgumentException>(() => mislabeled.Validate());
+        Assert.Contains("custom preset ID", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OfflineCustomHardeningRejectsAutomaticUpdates()
+    {
+        var invalid = SandboxHardeningOptions.Development with
+        {
+            PresetId = HardeningPresets.CustomId,
+            NetworkAccess = NetworkAccessPolicy.Offline,
+            AutomaticSecurityUpdates = true
+        };
+        Assert.Throws<ArgumentException>(() => invalid.Validate());
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(".")]

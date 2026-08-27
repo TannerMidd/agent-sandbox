@@ -19,7 +19,7 @@ Agent Sandbox is split into five production assemblies and one daemonless guest 
 - Guest workspace: `/home/ubuntu/work`
 - Guest app control data: `/home/ubuntu/work/.agent-sandbox`
 
-Settings, helper requests, preset manifests, and file operations use schema version 1. Unknown versions fail closed.
+Settings, helper requests, preset manifests, and file operations use schema version 1. Unknown versions fail closed. Each managed VM stores its selected hardening configuration alongside its image, resources, and agent presets; older settings normalize to the compatibility profile that matches their existing behavior.
 
 ## Trust boundaries
 
@@ -31,6 +31,6 @@ Guest file requests use path component arrays. The guest helper rejects separato
 
 ## Lifecycle
 
-The setup coordinator persists a state after each meaningful step. On relaunch it re-inspects the host, then selects the next safe state. Provisioning resolves a user-selected image from the compiled catalog (Ubuntu, Debian, Arch, Fedora, or Alpine) or validates an advanced custom HTTPS cloud-image URL, waits for apt/apk/dnf/pacman-aware cloud-init, runs health checks, stops the VM, creates `clean`, and starts it again before installing selected presets. The image ID and any custom URL are stored with each managed VM so rebuilds use the same source. Multipass requires native guest architecture, and the current Windows release remains x64-only.
+The setup coordinator persists a state after each meaningful step. On relaunch it re-inspects the host, then selects the next safe state. Provisioning resolves a user-selected image from the compiled catalog (Ubuntu, Debian, Arch, Fedora, or Alpine) or validates an advanced custom HTTPS cloud-image URL. The selected Development, Balanced, Restricted, Offline, or custom hardening configuration is rendered into a temporary cloud-init file from a packaged marker template; missing markers and invalid combinations fail closed, and the temporary file is removed after launch. Cloud-init applies cross-distribution packages and the chosen update, sysctl, audit, privilege, SSH, inbound-firewall, and egress policies, writes `/etc/agent-sandbox/hardening.json`, and then the host verifies that policy artifact during health checks. The VM is stopped, snapshotted as `clean`, and restarted before online agent presets are installed. The image ID and any custom URL are stored with each managed VM so rebuilds use the same source. Multipass requires native guest architecture, and the current Windows release remains x64-only.
 
 The app stores the VMs it creates and manages only those instances. Users choose a unique Multipass name for each VM and can switch the active target; import is allowed only for the exact existing `agent-dev` name and never renames or migrates it.
