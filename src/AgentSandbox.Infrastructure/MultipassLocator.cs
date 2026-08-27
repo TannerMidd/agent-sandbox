@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Win32;
 
 namespace AgentSandbox.Infrastructure;
@@ -16,22 +15,25 @@ public sealed class MultipassLocator : IMultipassLocator
 
     public string? Locate() => IsCanonicalExecutable(ExpectedPath) ? ExpectedPath : null;
 
-    public static bool IsCanonicalExecutable(string path)
+    public static bool IsCanonicalExecutable(string path) =>
+        IsCanonicalExecutable(path, ExpectedPath, HasCanonicalWindowsRegistration());
+
+    internal static bool IsCanonicalExecutable(string path, string expectedPath, bool hasCanonicalWindowsRegistration)
     {
-        if (!File.Exists(path)) return false;
+        // Canonical signs the installer, but Multipass 1.16.3 ships this executable without
+        // Authenticode or version-resource publisher metadata. Validate its protected install
+        // location and Canonical's machine registration instead of rejecting the official binary.
+        if (!hasCanonicalWindowsRegistration || !File.Exists(path)) return false;
         try
         {
             var fullPath = Path.GetFullPath(path);
+            if (!string.Equals(fullPath, Path.GetFullPath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                return false;
             var file = new FileInfo(fullPath);
             if (file.Attributes.HasFlag(FileAttributes.ReparsePoint) ||
                 file.Directory?.Attributes.HasFlag(FileAttributes.ReparsePoint) == true)
                 return false;
-            if (!string.Equals(fullPath, Path.GetFullPath(ExpectedPath), StringComparison.OrdinalIgnoreCase) ||
-                !HasCanonicalWindowsRegistration()) return false;
-            var info = FileVersionInfo.GetVersionInfo(path);
-            return info.CompanyName?.Contains("Canonical", StringComparison.OrdinalIgnoreCase) == true &&
-                   info.ProductName?.Contains("Multipass", StringComparison.OrdinalIgnoreCase) == true &&
-                   WindowsAuthenticodeVerifier.IsTrustedSignedBy(fullPath, "Canonical");
+            return true;
         }
         catch { return false; }
     }
