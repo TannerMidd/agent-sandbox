@@ -28,6 +28,8 @@ WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10
 CONTROL = WORK_ROOT / ".agent-sandbox"
 TRASH = CONTROL / "trash"
 STAGING = CONTROL / "staging"
+REQUESTS = pathlib.Path(os.environ.get("AGENT_SANDBOX_TEST_REQUESTS", "/home/ubuntu/.local/lib/agent-sandbox/requests"))
+MAX_REQUEST = 8 * 1024 * 1024
 
 
 class ProtocolError(Exception):
@@ -339,11 +341,30 @@ def cleanup_staging(force: bool = False):
         except OSError: pass
 
 
+def read_request():
+    if len(sys.argv) == 1:
+        return json.load(sys.stdin)
+    if len(sys.argv) != 3 or sys.argv[1] != "--request-file":
+        raise ProtocolError("INVALID_TRANSPORT", "The guest request transport is invalid.")
+    request_file = pathlib.Path(sys.argv[2])
+    request_root = REQUESTS.resolve(strict=True)
+    if request_file.parent.resolve(strict=True) != request_root or request_file.suffix != ".json":
+        raise ProtocolError("INVALID_TRANSPORT", "The guest request file is outside the request directory.")
+    info = request_file.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_REQUEST:
+        raise ProtocolError("INVALID_TRANSPORT", "The guest request file is invalid or too large.")
+    try:
+        with request_file.open("r", encoding="utf-8") as stream:
+            return json.load(stream)
+    finally:
+        request_file.unlink(missing_ok=True)
+
+
 def main() -> int:
     request = {}
     try:
         CONTROL.mkdir(parents=True, exist_ok=True)
-        request = json.load(sys.stdin)
+        request = read_request()
         cleanup_staging(force=request.get("op") == "list" and request.get("content") == "reconcile")
         response = handle(request)
     except ProtocolError as error:

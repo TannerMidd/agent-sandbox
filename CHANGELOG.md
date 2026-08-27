@@ -15,3 +15,6 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Fixed existing `agent-dev` discovery so import remains available during host-review states and never renames, migrates, or rebuilds the VM.
 - Replaced the elevated-only Hyper-V readiness query with read-only CIM checks that work for the normal desktop user.
 - Fixed Multipass discovery for Canonical's Windows package by validating the exact Program Files path against its installed-product publisher record.
+- Added a visible guest connection check and fixed Windows Terminal launch through the per-user execution alias.
+- Replaced redirected-stdin guest requests with bounded, one-shot request files because Multipass on Windows could leave the helper waiting indefinitely.
+- Made the dashboard summary responsive so connection and terminal controls remain usable at high display scaling and minimum window width.

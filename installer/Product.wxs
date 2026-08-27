@@ -2,7 +2,7 @@
   <Package
     Name="Agent Sandbox"
     Manufacturer="Agent Sandbox contributors"
-    Version="0.1.2"
+    Version="0.1.5"
     UpgradeCode="7B15B70C-785B-4BC1-96B5-186672C47A79"
     Language="1033"
     Scope="perMachine">

@@ -13,8 +13,11 @@ HELPER = pathlib.Path(__file__).parents[1] / "guest" / "guest_helper.py"
 class GuestHelperTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = pathlib.Path(self.temp.name)
-        self.env = dict(os.environ, AGENT_SANDBOX_TEST_WORK=str(self.root), PYTHONUTF8="1")
+        self.root = pathlib.Path(self.temp.name) / "work"
+        self.root.mkdir()
+        self.requests = pathlib.Path(self.temp.name) / "requests"
+        self.requests.mkdir()
+        self.env = dict(os.environ, AGENT_SANDBOX_TEST_WORK=str(self.root), AGENT_SANDBOX_TEST_REQUESTS=str(self.requests), PYTHONUTF8="1")
 
     def tearDown(self):
         self.temp.cleanup()
@@ -29,6 +32,13 @@ class GuestHelperTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         read = self.call(op="readText", relativePath=["space Ω.txt"])
         self.assertEqual("one\r\ntwo\n", read["content"])
+
+    def test_request_file_transport_is_bounded_and_removed(self):
+        request_file = self.requests / "request.json"
+        request_file.write_text(json.dumps({"v": 1, "id": "00000000-0000-0000-0000-000000000001", "op": "list", "rootId": "work", "relativePath": []}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(HELPER), "--request-file", str(request_file)], text=True, capture_output=True, env=self.env, check=False)
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        self.assertFalse(request_file.exists())
 
     def test_dotdot_and_separators_are_rejected(self):
         for value in ("..", "a/b", "a\\b", ""):

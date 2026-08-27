@@ -19,7 +19,24 @@ public sealed class GuestFileService(
         GuestPathPolicy.ValidateRequest(request);
         await EnsureDeployedAsync(cancellationToken);
         var json = JsonSerializer.Serialize(request);
-        var result = await RunMultipassAsync(["exec", instanceName, "--", "python3", RemoteHelper], json, TimeSpan.FromMinutes(5), cancellationToken);
+        var transportId = Guid.NewGuid().ToString("N");
+        var localDirectory = Path.Combine(Path.GetTempPath(), "AgentSandbox", "requests");
+        Directory.CreateDirectory(localDirectory);
+        var localRequest = Path.Combine(localDirectory, transportId + ".json");
+        var remoteRequest = $"/home/ubuntu/.local/lib/agent-sandbox/requests/{transportId}.json";
+        ProcessResult result;
+        try
+        {
+            await File.WriteAllTextAsync(localRequest, json, cancellationToken);
+            await RunMultipassAsync(["transfer", localRequest, $"{instanceName}:{remoteRequest}"], null, TimeSpan.FromMinutes(5), cancellationToken);
+            result = await RunMultipassAsync(["exec", instanceName, "--", "python3", RemoteHelper, "--request-file", remoteRequest], null, TimeSpan.FromMinutes(5), cancellationToken);
+        }
+        finally
+        {
+            TryDelete(localRequest);
+            try { await RunMultipassAsync(["exec", instanceName, "--", "rm", "-f", remoteRequest], null, TimeSpan.FromSeconds(30), CancellationToken.None); }
+            catch { }
+        }
         GuestFileResponse? response;
         try { response = JsonSerializer.Deserialize<GuestFileResponse>(result.StandardOutput); }
         catch (JsonException exception) { throw new InvalidDataException("The guest helper returned malformed JSON.", exception); }
@@ -142,7 +159,7 @@ public sealed class GuestFileService(
         {
             if (deployed) return;
             if (!File.Exists(guestHelperPath)) throw new FileNotFoundException("The bundled guest helper was not found.", guestHelperPath);
-            await RunMultipassAsync(["exec", instanceName, "--", "mkdir", "-p", "/home/ubuntu/.local/lib/agent-sandbox"], null, TimeSpan.FromMinutes(2), cancellationToken);
+            await RunMultipassAsync(["exec", instanceName, "--", "mkdir", "-p", "/home/ubuntu/.local/lib/agent-sandbox/requests"], null, TimeSpan.FromMinutes(2), cancellationToken);
             await RunMultipassAsync(["transfer", Path.GetFullPath(guestHelperPath), $"{instanceName}:{RemoteHelper}"], null, TimeSpan.FromMinutes(5), cancellationToken);
             deployed = true;
         }

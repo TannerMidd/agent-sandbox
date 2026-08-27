@@ -34,6 +34,9 @@ public sealed class UiContractTests
         var text = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml"));
         foreach (var label in new[] { "Dashboard", "Files", "Snapshots &amp; Recovery", "Diagnostics", "Settings", "Embedded terminal", "Transfer queue" })
             Assert.Contains(label, text, StringComparison.Ordinal);
+        Assert.Contains("Test connection", text, StringComparison.Ordinal);
+        Assert.Contains("GuestConnectionStatus", text, StringComparison.Ordinal);
+        Assert.Contains("AdaptiveTrigger MinWindowWidth=\"900\"", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -47,6 +50,7 @@ public sealed class UiContractTests
         Assert.Contains("OVERWRITE", code, StringComparison.Ordinal);
         Assert.Contains("ShowLegacyImportAsync", code, StringComparison.Ordinal);
         Assert.Contains("nothing is renamed, migrated, or rebuilt", code, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Open Windows Terminal", File.ReadAllText(RepoFile("src", "AgentSandbox.App", "ViewModels", "MainPageViewModel.cs")), StringComparison.Ordinal);
     }
 
     [Fact]

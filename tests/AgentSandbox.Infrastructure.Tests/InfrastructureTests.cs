@@ -120,6 +120,13 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
+    public void WindowsTerminalUsesThePerUserExecutionAlias()
+    {
+        var path = TerminalService.WindowsTerminalAliasPath(@"C:\Users\Developer\AppData\Local");
+        Assert.Equal(@"C:\Users\Developer\AppData\Local\Microsoft\WindowsApps\wt.exe", path);
+    }
+
+    [Fact]
     public async Task OperationHistoryRollsForwardWithoutSecrets()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));

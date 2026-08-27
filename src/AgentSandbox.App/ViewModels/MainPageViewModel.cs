@@ -7,6 +7,7 @@ using AgentSandbox.Infrastructure;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace AgentSandbox.App.ViewModels;
 
@@ -42,6 +43,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string DiskLabel { get; set; } = "—";
     [ObservableProperty] public partial string OperationLabel { get; set; } = "No active operation";
     [ObservableProperty] public partial bool HasActiveTransfer { get; set; }
+    [ObservableProperty] public partial string GuestConnectionStatus { get; set; } = "Connection not tested";
+    [ObservableProperty] public partial string GuestConnectionDetail { get; set; } = "Start the sandbox, then test the guest connection.";
+    [ObservableProperty] public partial InfoBarSeverity GuestConnectionSeverity { get; set; } = InfoBarSeverity.Informational;
 
     public ObservableCollection<HostFileItem> HostEntries { get; } = [];
     public ObservableCollection<GuestFileEntry> GuestEntries { get; } = [];
@@ -87,8 +91,34 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         await RunBusyAsync(async () =>
         {
-            await services.Terminal.OpenExternalAsync(settings.InstanceName);
-            OperationLabel = "Opened Windows Terminal in the guest";
+            var operationId = Guid.NewGuid();
+            try
+            {
+                if (!await ProbeGuestConnectionAsync())
+                    throw new InvalidOperationException($"{GuestConnectionStatus}: {GuestConnectionDetail}");
+                await services.Terminal.OpenExternalAsync(settings.InstanceName);
+                OperationLabel = $"Windows Terminal launched for {settings.InstanceName}";
+                await services.History.AppendAsync(new OperationProgress(operationId, "Open Windows Terminal", OperationState.Succeeded,
+                    "Terminal launcher started", 100, null, null, null, settings.InstanceName, DateTimeOffset.UtcNow));
+            }
+            catch (Exception exception)
+            {
+                await services.History.AppendAsync(new OperationProgress(operationId, "Open Windows Terminal", OperationState.Failed,
+                    "Terminal launch failed", null, null, null, "TERMINAL_LAUNCH_FAILED", exception.Message, DateTimeOffset.UtcNow));
+                throw;
+            }
+        });
+    }
+
+    [RelayCommand]
+    public async Task TestConnectionAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            GuestConnectionStatus = "Testing guest connection";
+            GuestConnectionDetail = $"Contacting {settings.InstanceName} and checking /home/ubuntu/work…";
+            GuestConnectionSeverity = InfoBarSeverity.Informational;
+            if (await ProbeGuestConnectionAsync()) OperationLabel = $"Connected to {settings.InstanceName}";
         });
     }
 
@@ -413,14 +443,50 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SandboxStatus = sandbox?.State.ToString() ?? "Not provisioned";
         CanOperateSandbox = sandbox is not null;
         SandboxDetail = sandbox is null ? "Complete setup to create the Ubuntu 24.04 development VM." : $"{sandbox.InstanceName} • Ubuntu {sandbox.UbuntuRelease ?? "24.04"} • {sandbox.IPv4Address ?? "No IP yet"}";
+        if (sandbox is null)
+        {
+            GuestConnectionStatus = "Not connected";
+            GuestConnectionDetail = $"The exact sandbox '{settings.InstanceName}' was not found.";
+            GuestConnectionSeverity = InfoBarSeverity.Warning;
+        }
         Snapshots.Clear();
         if (sandbox is not null)
         {
             if (sandbox.State == SandboxState.Running)
-                await services.CreateGuestFiles(settings.InstanceName).ReconcileAsync();
+                await ProbeGuestConnectionAsync();
+            else
+            {
+                GuestConnectionStatus = $"Guest is {sandbox.State.ToString().ToLowerInvariant()}";
+                GuestConnectionDetail = "Start the sandbox to test the workspace and open a terminal.";
+                GuestConnectionSeverity = InfoBarSeverity.Warning;
+            }
             foreach (var item in await services.Multipass.ListSnapshotsAsync(settings.InstanceName)) Snapshots.Add(item);
         }
         await RefreshDiagnosticsCoreAsync();
+    }
+
+    private async Task<bool> ProbeGuestConnectionAsync()
+    {
+        try
+        {
+            var sandbox = await services.Multipass.GetSandboxAsync(settings.InstanceName);
+            if (sandbox is null)
+                throw new InvalidOperationException($"The exact sandbox '{settings.InstanceName}' was not found.");
+            if (sandbox.State != SandboxState.Running)
+                throw new InvalidOperationException($"The sandbox is {sandbox.State.ToString().ToLowerInvariant()}. Start it before connecting.");
+            await services.CreateGuestFiles(settings.InstanceName).ReconcileAsync();
+            GuestConnectionStatus = $"Connected to {settings.InstanceName}";
+            GuestConnectionDetail = $"Ubuntu {sandbox.UbuntuRelease ?? "24.04"} responded and /home/ubuntu/work is accessible at {sandbox.IPv4Address ?? "its Multipass address"}.";
+            GuestConnectionSeverity = InfoBarSeverity.Success;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            GuestConnectionStatus = "Guest connection failed";
+            GuestConnectionDetail = exception.Message;
+            GuestConnectionSeverity = InfoBarSeverity.Error;
+            return false;
+        }
     }
 
     private async Task RunBusyAsync(Func<Task> action)

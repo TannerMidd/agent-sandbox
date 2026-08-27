@@ -22,12 +22,18 @@ public sealed class TerminalService(IMultipassLocator locator) : ITerminalServic
         ValidateInstance(instanceName);
         cancellationToken.ThrowIfCancellationRequested();
         var executable = locator.Locate() ?? throw new FileNotFoundException("Multipass was not found.");
-        var start = new ProcessStartInfo { FileName = "wt.exe", UseShellExecute = true };
+        var terminal = WindowsTerminalAliasPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        if (!File.Exists(terminal))
+            throw new FileNotFoundException("Windows Terminal is not installed or its app execution alias is disabled. Use Embedded terminal or enable the wt.exe alias in Windows Settings.", terminal);
+        var start = new ProcessStartInfo { FileName = terminal, UseShellExecute = true };
         start.ArgumentList.Add("new-tab"); start.ArgumentList.Add("--title"); start.ArgumentList.Add("Agent Sandbox");
         start.ArgumentList.Add(executable); start.ArgumentList.Add("shell"); start.ArgumentList.Add(instanceName);
-        Process.Start(start);
+        _ = Process.Start(start) ?? throw new InvalidOperationException("Windows accepted the terminal request but did not create a launcher process.");
         return Task.CompletedTask;
     }
+
+    public static string WindowsTerminalAliasPath(string localApplicationData) =>
+        Path.Combine(Path.GetFullPath(localApplicationData), "Microsoft", "WindowsApps", "wt.exe");
 
     private static void ValidateInstance(string value)
     {
