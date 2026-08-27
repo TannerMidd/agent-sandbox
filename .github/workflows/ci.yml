@@ -35,9 +35,23 @@ jobs:
           dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --configuration Release --no-restore -p:CI=true
       - name: Test guest helper
         run: python tests/guest_helper_tests.py
-      - name: Upload test build
+      - name: Publish x64 app and helper
+        run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:PublishDir=${{ github.workspace }}\artifacts\publish\
+      - name: Build installable test package
+        run: dotnet build installer/AgentSandbox.Installer.wixproj --configuration Release --no-restore -p:PublishDir=${{ github.workspace }}\artifacts\publish -p:PackageVersion=0.1.${{ github.run_number }}
+      - name: Create package checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts\package | Out-Null
+          Copy-Item installer\bin\x64\Release\AgentSandbox-x64.msi artifacts\package\AgentSandbox-x64-unsigned.msi
+          $package = Get-Item artifacts\package\AgentSandbox-x64-unsigned.msi
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.FullName).Hash.ToLowerInvariant()
+          "$hash  $($package.Name)" | Set-Content -NoNewline -LiteralPath "$($package.FullName).sha256"
+      - name: Upload installable test package
         uses: actions/upload-artifact@v7
         with:
-          name: agent-sandbox-ci-x64
-          path: src/AgentSandbox.App/bin/x64/Release/**
+          name: agent-sandbox-main-${{ github.run_number }}-x64
+          path: |
+            artifacts/package/AgentSandbox-x64-unsigned.msi
+            artifacts/package/AgentSandbox-x64-unsigned.msi.sha256
           if-no-files-found: error

@@ -3,8 +3,9 @@
     <OutputName>AgentSandbox-x64</OutputName>
     <OutputType>Package</OutputType>
     <Platform>x64</Platform>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.5</PackageVersion>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
-    <DefineConstants>PublishDir=$(PublishDir)</DefineConstants>
+    <DefineConstants>PublishDir=$(PublishDir);PackageVersion=$(PackageVersion)</DefineConstants>
     <SuppressValidation>false</SuppressValidation>
     <!-- Some self-contained Windows App SDK binaries expose non-LANGID version resources. -->
     <SuppressIces>ICE03</SuppressIces>
