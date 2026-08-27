@@ -118,6 +118,47 @@ public sealed class UiContractTests
     }
 
     [Fact]
+    public void PreviewLabelAndReleaseWorkflowRespectBetaGate()
+    {
+        var page = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml"));
+        Assert.Contains("DEVELOPMENT PREVIEW", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("PUBLIC BETA", page, StringComparison.Ordinal);
+        var release = File.ReadAllText(RepoFile(".github", "workflows", "release.yml"));
+        Assert.Contains("docs/TEST-MATRIX.md", release, StringComparison.Ordinal);
+        Assert.Contains("RELEASE_VERSION", release, StringComparison.Ordinal);
+        Assert.Contains("Smoke-test published WinUI interactions", release, StringComparison.Ordinal);
+        var smoke = File.ReadAllText(RepoFile("scripts", "winappdriver-smoke.ps1"));
+        var installerScript = File.ReadAllText(RepoFile("scripts", "install-winappdriver.ps1"));
+        Assert.Contains("/session/$sessionId/element", smoke, StringComparison.Ordinal);
+        Assert.Contains("/click", smoke, StringComparison.Ordinal);
+        Assert.Contains("Updates & privacy", smoke, StringComparison.Ordinal);
+        Assert.Contains("A76A8F4E44B29BAD331ACF6B6C248FCC65324F502F28826AD2ACD5F3C80857FE", installerScript, StringComparison.Ordinal);
+        var build = File.ReadAllText(RepoFile("Directory.Build.props"));
+        var installer = File.ReadAllText(RepoFile("installer", "AgentSandbox.Installer.wixproj"));
+        Assert.Contains("<VersionPrefix Condition=\"'$(VersionPrefix)' == ''\">0.1.6</VersionPrefix>", build, StringComparison.Ordinal);
+        Assert.Contains(">0.1.6</PackageVersion>", installer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BothFilePanesExposeCompleteBoundedListings()
+    {
+        var viewModel = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "ViewModels", "MainPageViewModel.cs"));
+        Assert.Contains("LoadCompleteGuestListingAsync", viewModel, StringComparison.Ordinal);
+        Assert.Contains("const int limit = 10_000", viewModel, StringComparison.Ordinal);
+        Assert.DoesNotContain("Take(100)", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SnapshotDeletionRequiresExactTypedConfirmation()
+    {
+        var xaml = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml"));
+        var code = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainPage.xaml.cs"));
+        Assert.Contains("DeleteSnapshot_Click", xaml, StringComparison.Ordinal);
+        Assert.Contains("Type {exact} to permanently delete", code, StringComparison.Ordinal);
+        Assert.Contains("DeleteSnapshotAsync", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DarkThemeIsTheSafeDefault()
     {
         var app = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "App.xaml"));

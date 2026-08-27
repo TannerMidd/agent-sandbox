@@ -43,7 +43,11 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
     {
         ValidateIdentifier(instanceName);
         var all = await ListSandboxesAsync(cancellationToken);
-        return all.SingleOrDefault(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
+        var summary = all.SingleOrDefault(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
+        if (summary is null) return null;
+        var result = await RunAsync(["info", instanceName, "--format", "json"], DefaultTimeout, cancellationToken);
+        using var document = JsonDocument.Parse(result.StandardOutput);
+        return EnrichFromInfo(document.RootElement, summary);
     }
 
     public async Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default)
@@ -128,17 +132,26 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             await RunAsync(arguments, TimeSpan.FromMinutes(35), cancellationToken);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Waiting for cloud-init");
             await RunAsync(["exec", request.InstanceName, "--", "cloud-init", "status", "--wait"], TimeSpan.FromMinutes(30), cancellationToken);
-            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", "set -eu; test -d /home/ubuntu/work; test -s /etc/agent-sandbox/hardening.json; command -v git; command -v python3; command -v docker; command -v npm; node -e 'if (+process.versions.node.split(\".\")[0] < 20) process.exit(1)'; test -S /var/run/docker.sock"], TimeSpan.FromMinutes(5), cancellationToken);
+            var hardeningVerification = BuildHardeningVerificationScript(hardening);
+            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", $"set -eu; test -d /home/ubuntu/work; test -s /etc/agent-sandbox/hardening.json; command -v git; command -v python3; command -v docker; command -v npm; node -e 'if (+process.versions.node.split(\".\")[0] < 20) process.exit(1)'; {hardeningVerification}"], TimeSpan.FromMinutes(5), cancellationToken);
+            var policyArtifact = await RunAsync(["exec", request.InstanceName, "--", "cat", "/etc/agent-sandbox/hardening.json"], TimeSpan.FromMinutes(2), cancellationToken);
+            ValidateHardeningArtifact(policyArtifact.StandardOutput, hardening);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Creating clean baseline");
             await RunAsync(["stop", request.InstanceName], TimeSpan.FromMinutes(10), cancellationToken);
             await RunAsync(["snapshot", request.InstanceName, "--name", ValidateIdentifier(request.BaselineSnapshot)], TimeSpan.FromMinutes(10), cancellationToken);
             await RunAsync(["start", request.InstanceName], TimeSpan.FromMinutes(10), cancellationToken);
+            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", $"set -eu; {hardeningVerification}"], TimeSpan.FromMinutes(5), cancellationToken);
             return Report(progress, id, "Provision sandbox", OperationState.Succeeded, "Ready");
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             var partialExists = false;
-            try { partialExists = await GetSandboxAsync(request.InstanceName, CancellationToken.None) is not null; } catch { }
+            try
+            {
+                partialExists = (await ListSandboxesAsync(CancellationToken.None))
+                    .Any(item => string.Equals(item.InstanceName, request.InstanceName, StringComparison.Ordinal));
+            }
+            catch { }
             var state = partialExists ? OperationState.CleanupPending : exception is OperationCanceledException ? OperationState.Canceled : OperationState.Failed;
             var phase = partialExists ? "Provisioning stopped; the partial VM was preserved for diagnostics" : "Provisioning failed before the VM was created";
             return Report(progress, id, "Provision sandbox", state, phase, "PROVISION_FAILED", exception.Message);
@@ -162,18 +175,46 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
         return snapshots.DistinctBy(snapshot => snapshot.Name).ToArray();
     }
 
-    public Task<OperationProgress> CreateSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) =>
-        RunOperationAsync("Create snapshot", ["snapshot", ValidateIdentifier(instanceName), "--name", ValidateIdentifier(snapshotName)], null, TimeSpan.FromMinutes(10), cancellationToken);
+    public async Task<OperationProgress> CreateSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentifier(instanceName); ValidateIdentifier(snapshotName);
+        var sandbox = await GetSandboxAsync(instanceName, cancellationToken)
+            ?? throw new InvalidOperationException($"Exact sandbox '{instanceName}' does not exist.");
+        var restart = sandbox.State == SandboxState.Running;
+        if (sandbox.State != SandboxState.Stopped)
+            await RunAsync(["stop", instanceName], TimeSpan.FromMinutes(10), cancellationToken);
+        var result = await RunOperationAsync("Create snapshot", ["snapshot", instanceName, "--name", snapshotName], null, TimeSpan.FromMinutes(10), cancellationToken);
+        if (restart)
+            await RunAsync(["start", instanceName], TimeSpan.FromMinutes(10), CancellationToken.None);
+        return result;
+    }
 
     public async Task<OperationProgress> RestoreSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentifier(instanceName); ValidateIdentifier(snapshotName);
+        var exactTarget = $"{instanceName}.{snapshotName}";
+        var sandbox = await GetSandboxAsync(instanceName, cancellationToken)
+            ?? throw new InvalidOperationException($"Exact sandbox '{instanceName}' does not exist.");
+        var existing = await ListSnapshotsAsync(instanceName, cancellationToken);
+        if (!existing.Any(item => string.Equals(item.Name, snapshotName, StringComparison.Ordinal)))
+            throw new InvalidOperationException($"Exact snapshot '{exactTarget}' does not exist.");
+        var restart = sandbox.State == SandboxState.Running;
+        if (sandbox.State != SandboxState.Stopped)
+            await RunAsync(["stop", instanceName], TimeSpan.FromMinutes(10), cancellationToken);
+        var result = await RunOperationAsync("Restore snapshot", ["restore", "--destructive", exactTarget], null, TimeSpan.FromMinutes(20), cancellationToken);
+        if (restart && result.State == OperationState.Succeeded)
+            await RunAsync(["start", instanceName], TimeSpan.FromMinutes(10), cancellationToken);
+        return result;
+    }
+
+    public async Task<OperationProgress> DeleteSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default)
     {
         ValidateIdentifier(instanceName); ValidateIdentifier(snapshotName);
         var exactTarget = $"{instanceName}.{snapshotName}";
         var existing = await ListSnapshotsAsync(instanceName, cancellationToken);
         if (!existing.Any(item => string.Equals(item.Name, snapshotName, StringComparison.Ordinal)))
             throw new InvalidOperationException($"Exact snapshot '{exactTarget}' does not exist.");
-        await RunAsync(["stop", instanceName], TimeSpan.FromMinutes(10), cancellationToken);
-        return await RunOperationAsync("Restore snapshot", ["restore", "--destructive", exactTarget], null, TimeSpan.FromMinutes(20), cancellationToken);
+        return await RunOperationAsync("Delete snapshot", ["delete", exactTarget], null, TimeSpan.FromMinutes(10), cancellationToken);
     }
 
     public async Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default)
@@ -215,6 +256,73 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
         return result;
     }
 
+    public static string BuildHardeningVerificationScript(SandboxHardeningOptions options)
+    {
+        options.Validate();
+        var checks = new List<string>
+        {
+            "test -S /var/run/docker.sock",
+            "sshd -T | grep -Fx 'passwordauthentication no' >/dev/null",
+            "sshd -T | grep -Fx 'permitrootlogin no' >/dev/null"
+        };
+        checks.Add("sudo -n /usr/local/sbin/agent-sandbox-verify-runtime >/dev/null");
+        checks.Add(options.AllowAdministrativeTools
+            ? "sudo -n true >/dev/null 2>&1; docker info >/dev/null 2>&1"
+            : "! sudo -n true >/dev/null 2>&1; ! docker info >/dev/null 2>&1");
+        if (options.KernelHardening)
+        {
+            checks.Add("test \"$(sysctl -n kernel.kptr_restrict)\" -ge 2");
+            checks.Add("test \"$(sysctl -n kernel.dmesg_restrict)\" -ge 1");
+            checks.Add("test \"$(sysctl -n net.ipv4.conf.all.accept_redirects)\" -eq 0");
+        }
+        if (options.RestrictUnprivilegedFeatures)
+        {
+            checks.Add("test \"$(sysctl -n user.max_user_namespaces)\" -eq 0");
+            checks.Add("grep -Fx '* hard core 0' /etc/security/limits.d/60-agent-sandbox.conf >/dev/null");
+        }
+        if (options.AuditSecurityEvents)
+        {
+            checks.Add("test -s /etc/audit/rules.d/60-agent-sandbox.rules");
+            checks.Add("if command -v systemctl >/dev/null 2>&1; then systemctl is-active --quiet auditd; else rc-service auditd status >/dev/null; fi");
+        }
+        return string.Join("; ", checks);
+    }
+
+    public static void ValidateHardeningArtifact(string json, SandboxHardeningOptions expected)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        expected.Validate();
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var network = expected.NetworkAccess switch
+        {
+            NetworkAccessPolicy.Unrestricted => "unrestricted",
+            NetworkAccessPolicy.WebOnly => "web-only",
+            NetworkAccessPolicy.Offline => "offline",
+            _ => throw new ArgumentOutOfRangeException(nameof(expected))
+        };
+        var matches = root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("schemaVersion", out var schema) && schema.ValueKind == JsonValueKind.Number && schema.GetInt32() == 1 &&
+            RequiredString(root, "presetId") == expected.PresetId &&
+            RequiredBoolean(root, "automaticSecurityUpdates") == expected.AutomaticSecurityUpdates &&
+            RequiredBoolean(root, "kernelHardening") == expected.KernelHardening &&
+            RequiredBoolean(root, "restrictUnprivilegedFeatures") == expected.RestrictUnprivilegedFeatures &&
+            RequiredBoolean(root, "auditSecurityEvents") == expected.AuditSecurityEvents &&
+            RequiredString(root, "networkAccess") == network &&
+            RequiredBoolean(root, "allowAdministrativeTools") == expected.AllowAdministrativeTools;
+        if (!matches) throw new InvalidDataException("The guest hardening artifact does not match the requested policy.");
+    }
+
+    private static string RequiredString(JsonElement root, string property) =>
+        root.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : throw new InvalidDataException($"The guest hardening artifact is missing '{property}'.");
+
+    private static bool RequiredBoolean(JsonElement root, string property) =>
+        root.TryGetProperty(property, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : throw new InvalidDataException($"The guest hardening artifact is missing '{property}'.");
+
     private static OperationProgress Report(IProgress<OperationProgress>? progress, Guid id, string title, OperationState state, string phase, string? errorCode = null, string? detail = null)
     {
         var value = new OperationProgress(id, title, state, phase, null, null, null, errorCode, detail, DateTimeOffset.UtcNow);
@@ -253,6 +361,58 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             throw new JsonException($"Guest resource usage did not include a valid '{property}' value.");
         return result;
     }
+
+    private static SandboxInfo EnrichFromInfo(JsonElement root, SandboxInfo summary)
+    {
+        if (!root.TryGetProperty("info", out var info) || info.ValueKind != JsonValueKind.Object ||
+            !info.TryGetProperty(summary.InstanceName, out var item) || item.ValueKind != JsonValueKind.Object)
+            throw new JsonException($"Multipass info did not include exact instance '{summary.InstanceName}'.");
+        var cpu = ReadPositiveInt(item, "cpu_count");
+        var memoryBytes = ReadNestedPositiveInt64(item, "memory", "total");
+        long diskBytes = 0;
+        if (item.TryGetProperty("disks", out var disks) && disks.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var disk in disks.EnumerateObject())
+                diskBytes = Math.Max(diskBytes, ReadPositiveInt64(disk.Value, "total"));
+        }
+        if (diskBytes <= 0) throw new JsonException("Multipass info did not include a valid disk capacity.");
+        var resources = new ResourceProfile(cpu, BytesToGiB(memoryBytes), BytesToGiB(diskBytes));
+        return summary with
+        {
+            Resources = resources,
+            State = ReadString(item, "state") is { } state ? ParseState(state) : summary.State,
+            IPv4Address = ReadFirstString(item, "ipv4") ?? summary.IPv4Address,
+            OsRelease = ReadString(item, "release") ?? summary.OsRelease,
+            LastUpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static int ReadPositiveInt(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) throw new JsonException($"Multipass info is missing '{property}'.");
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+        return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var result) && result > 0
+            ? result
+            : throw new JsonException($"Multipass info has an invalid '{property}'.");
+    }
+
+    private static long ReadNestedPositiveInt64(JsonElement element, string parent, string property)
+    {
+        if (!element.TryGetProperty(parent, out var nested) || nested.ValueKind != JsonValueKind.Object)
+            throw new JsonException($"Multipass info is missing '{parent}'.");
+        return ReadPositiveInt64(nested, property);
+    }
+
+    private static long ReadPositiveInt64(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) throw new JsonException($"Multipass info is missing '{property}'.");
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+        return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var result) && result > 0
+            ? result
+            : throw new JsonException($"Multipass info has an invalid '{property}'.");
+    }
+
+    private static int BytesToGiB(long bytes) => checked((int)Math.Max(1, (bytes + 1_073_741_823L) / 1_073_741_824L));
 
     private static string? ReadFirstString(JsonElement element, string property)
     {

@@ -9,7 +9,9 @@ public sealed record SandboxConfiguration(
     bool ImportedLegacyInstance = false,
     string ImageId = LinuxImages.DefaultId,
     string? CustomImageUrl = null,
-    SandboxHardeningOptions? Hardening = null);
+    SandboxHardeningOptions? Hardening = null,
+    IReadOnlyList<string>? PendingPresetIds = null,
+    bool ProvisioningComplete = true);
 
 public sealed record AgentSandboxSettings
 {
@@ -29,7 +31,7 @@ public sealed record AgentSandboxSettings
     public bool AdvancedGuestBrowsing { get; init; }
     public bool CheckForUpdates { get; init; } = true;
     public DateTimeOffset? LastUpdateCheck { get; init; }
-    public string? ReleaseRepository { get; init; }
+    public string? ReleaseRepository { get; init; } = "TannerMidd/agent-sandbox";
     public IReadOnlyList<string> SelectedPresetIds { get; init; } = [];
     [JsonIgnore] public bool IsReady => SetupState == SetupState.Ready;
 }

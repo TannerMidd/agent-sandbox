@@ -85,8 +85,7 @@ public sealed class HostPrerequisiteService(
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Agent Sandbox elevated setup requires Windows.");
         if (!SetupHelperOperations.Allowed.Contains(request.Operation))
             throw new InvalidOperationException("The requested elevated operation is not allow-listed.");
-        if (!File.Exists(setupHelperPath))
-            throw new FileNotFoundException("The compiled setup helper was not found.", setupHelperPath);
+        ValidateProtectedSetupHelper(setupHelperPath);
 
         var pipeName = $"AgentSandbox.Setup.{Guid.NewGuid():N}";
         var currentSid = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("The current Windows identity has no SID.");
@@ -113,7 +112,33 @@ public sealed class HostPrerequisiteService(
         await writer.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(), cancellationToken);
         var responseLine = await reader.ReadLineAsync(cancellationToken);
         var response = responseLine is null ? null : JsonSerializer.Deserialize<SetupHelperResponse>(responseLine);
-        return response ?? throw new InvalidDataException("The setup helper returned an empty response.");
+        if (response is null) throw new InvalidDataException("The setup helper returned an empty response.");
+        if (response.Version != request.Version || response.RequestId != request.RequestId)
+            throw new InvalidDataException("The setup helper response did not match the current request.");
+        return response;
+    }
+
+    public static void ValidateProtectedSetupHelper(string path)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException("The compiled setup helper was not found.", path);
+        var fullPath = Path.GetFullPath(path);
+        var programFiles = Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles))
+            .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(programFiles, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("Elevated setup is disabled outside the protected Program Files installation. Portable builds are diagnostics-only.");
+        FileSystemInfo? item = new FileInfo(fullPath);
+        while (item is not null)
+        {
+            if (item.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                throw new UnauthorizedAccessException("The setup helper path cannot contain reparse points.");
+            if (string.Equals(item.FullName.TrimEnd(Path.DirectorySeparatorChar), programFiles.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)) break;
+            item = item switch
+            {
+                FileInfo file => file.Directory,
+                DirectoryInfo directory => directory.Parent,
+                _ => null
+            };
+        }
     }
 
     private static DiagnosticRecord Error(string code, string title, string detail) => new(code, title, DiagnosticSeverity.Error, detail);

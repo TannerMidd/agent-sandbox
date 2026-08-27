@@ -7,7 +7,7 @@
   "properties": {
     "v": { "const": 1 },
     "id": { "type": "string", "format": "uuid" },
-    "op": { "enum": ["list", "stat", "search", "upload", "download", "mkdir", "createFile", "rename", "copy", "move", "trash", "restore", "purge", "readText", "writeText", "chmod", "archive", "extract"] },
+    "op": { "enum": ["list", "stat", "search", "upload", "download", "stageDownload", "mkdir", "createFile", "rename", "copy", "move", "trash", "restore", "purge", "readText", "writeText", "chmod", "archive", "extract"] },
     "rootId": { "enum": ["work", "system"] },
     "relativePath": { "$ref": "#/$defs/path" },
     "destinationPath": { "$ref": "#/$defs/path" },
@@ -15,12 +15,35 @@
     "cursor": { "type": ["string", "null"] },
     "conflict": { "enum": ["fail", "overwrite", "rename"] },
     "content": { "type": ["string", "null"] },
-    "mode": { "type": ["integer", "null"], "minimum": 0, "maximum": 511 }
+    "mode": { "type": ["integer", "null"], "minimum": 0, "maximum": 511 },
+    "expected": {
+      "oneOf": [
+        { "$ref": "#/$defs/expectation" },
+        { "type": "null" }
+      ]
+    }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "op": { "const": "stageDownload" } }, "required": ["op"] },
+      "then": { "required": ["destinationPath", "expected"] }
+    }
+  ],
   "$defs": {
     "path": {
       "type": "array",
       "items": { "type": "string", "minLength": 1, "pattern": "^(?!\\.{1,2}$)[^/\\\\\\u0000]+$" }
+    },
+    "expectation": {
+      "type": "object",
+      "required": ["kind", "size", "mtimeNs", "mode"],
+      "properties": {
+        "kind": { "enum": ["file", "directory"] },
+        "size": { "type": "integer", "minimum": 0 },
+        "mtimeNs": { "type": "integer", "minimum": 0 },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": true

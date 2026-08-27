@@ -39,6 +39,8 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string ErrorMessage { get; set; } = "";
     [ObservableProperty] public partial bool IsBusy { get; set; }
     [ObservableProperty] public partial bool CanOperateSandbox { get; set; }
+    [ObservableProperty] public partial bool CanStartSandbox { get; set; }
+    [ObservableProperty] public partial bool CanStopSandbox { get; set; }
     [ObservableProperty] public partial bool CanManageSandbox { get; set; }
     [ObservableProperty] public partial string HostPath { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     [ObservableProperty] public partial string GuestPath { get; set; } = "/home/ubuntu/work";
@@ -168,7 +170,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     public async Task CreateSnapshotAsync()
     {
         await RunOperationAsync(
-            () => services.Multipass.CreateSnapshotAsync(settings.InstanceName, $"manual-{DateTimeOffset.Now:yyyyMMdd-HHmmss}"),
+            () => services.Multipass.CreateSnapshotAsync(settings.InstanceName, $"manual-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}"),
             "Creating a recoverable snapshot");
     }
 
@@ -236,6 +238,15 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         await RefreshSandboxCoreAsync();
     }
 
+    public async Task RetryPendingPresetsAsync(IProgress<OperationProgress>? progress = null)
+    {
+        var result = await services.Lifecycle.RetryPendingPresetsAsync(settings.InstanceName, progress);
+        await services.History.AppendAsync(result);
+        OperationLabel = result.Phase;
+        await ReloadSetupAsync();
+        if (result.State != OperationState.Succeeded) throw new InvalidOperationException(result.Detail ?? result.Phase);
+    }
+
     public async Task DeleteSandboxAsync(string instanceName)
     {
         if (HasActiveTransfer) throw new InvalidOperationException("Wait for the active transfer before deleting a sandbox.");
@@ -249,8 +260,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     public async Task RebuildSandboxAsync(string instanceName)
     {
         var configuration = settings.Sandboxes.Single(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
+        var desiredPresets = configuration.SelectedPresetIds.Concat(configuration.PendingPresetIds ?? []).Distinct(StringComparer.Ordinal).ToArray();
         await DeleteSandboxAsync(instanceName);
-        await ProvisionAsync(configuration.InstanceName, configuration.ImageId, configuration.CustomImageUrl, configuration.Resources, configuration.SelectedPresetIds, configuration.Hardening ?? SandboxHardeningOptions.Development);
+        await ProvisionAsync(configuration.InstanceName, configuration.ImageId, configuration.CustomImageUrl, configuration.Resources, desiredPresets, configuration.Hardening ?? SandboxHardeningOptions.Development);
     }
 
     public async Task SavePreferencesAsync(string theme, bool reducedMotion, bool updates, bool advancedBrowsing, string? releaseRepository = null)
@@ -383,6 +395,15 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         var result = await services.Multipass.RestoreSnapshotAsync(settings.InstanceName, snapshot.Name);
         OperationLabel = result.Phase;
+        await services.History.AppendAsync(result);
+        await RefreshSandboxCoreAsync();
+    }
+
+    public async Task DeleteSnapshotAsync(SnapshotInfo snapshot)
+    {
+        var result = await services.Multipass.DeleteSnapshotAsync(settings.InstanceName, snapshot.Name);
+        OperationLabel = result.Phase;
+        await services.History.AppendAsync(result);
         await RefreshSandboxCoreAsync();
     }
 
@@ -426,11 +447,16 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SetupDetail = SetupDescription(currentSetupState);
         SetupActionLabel = SetupAction(currentSetupState);
 
-        if (currentSetupState != SetupState.NeedsReview ||
-            settings.ImportedLegacyInstance ||
-            string.Equals(settings.InstanceName, "agent-dev", StringComparison.Ordinal))
+        if (currentSetupState != SetupState.NeedsReview) return;
+        var active = settings.Sandboxes.SingleOrDefault(item => string.Equals(item.InstanceName, settings.InstanceName, StringComparison.Ordinal));
+        if (active is { ProvisioningComplete: true, PendingPresetIds.Count: > 0 })
+        {
+            SetupHeading = "Finish installing sandbox tools";
+            SetupDetail = "The VM is healthy. Retry the verified optional-tool installation without rebuilding the sandbox.";
+            SetupActionLabel = "Retry installation";
             return;
-
+        }
+        if (settings.ImportedLegacyInstance || string.Equals(settings.InstanceName, "agent-dev", StringComparison.Ordinal)) return;
         if (await InspectLegacyImportAsync() is null) return;
         SetupHeading = "Use your existing agent-dev sandbox";
         SetupDetail = "Import preserves its name, data, storage, and snapshots. Nothing is renamed, migrated, or rebuilt.";
@@ -513,15 +539,45 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
 
     private async Task LoadGuestFilesCoreAsync()
     {
-        var response = await services.CreateGuestFiles(settings.InstanceName).ExecuteAsync(
-            new GuestFileRequest { Operation = string.IsNullOrWhiteSpace(guestQuery) ? "list" : "search", RootId = guestRootId, RelativePath = guestPathComponents.ToArray(), Content = guestQuery });
-        if (!response.IsSuccess) throw new IOException(response.Error?.Message ?? "The guest listing failed.");
+        var entries = await LoadCompleteGuestListingAsync();
         GuestEntries.Clear();
-        foreach (var item in response.Entries.Where(item => showHiddenGuest || item.Name.Length == 0 || item.Name[0] != '.')) GuestEntries.Add(item);
+        foreach (var item in entries.Where(item => showHiddenGuest || item.Name.Length == 0 || item.Name[0] != '.')) GuestEntries.Add(item);
         var root = guestRootId == GuestRoots.Work ? "/home/ubuntu/work" : "";
         GuestPath = root + "/" + string.Join('/', guestPathComponents);
         if (GuestPath.Length > 1) GuestPath = GuestPath.TrimEnd('/');
-        OperationLabel = $"Loaded {response.Entries.Count} guest items";
+        OperationLabel = $"Loaded {entries.Count} guest items";
+    }
+
+    private async Task<IReadOnlyList<GuestFileEntry>> LoadCompleteGuestListingAsync()
+    {
+        var operation = string.IsNullOrWhiteSpace(guestQuery) ? "list" : "search";
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var entries = new List<GuestFileEntry>();
+            string? cursor = null;
+            while (true)
+            {
+                var response = await services.CreateGuestFiles(settings.InstanceName).ExecuteAsync(new GuestFileRequest
+                {
+                    Operation = operation,
+                    RootId = guestRootId,
+                    RelativePath = guestPathComponents.ToArray(),
+                    Content = guestQuery,
+                    Cursor = cursor,
+                    PageSize = 200
+                });
+                if (!response.IsSuccess)
+                {
+                    if (attempt == 0 && response.Error?.Code == "LISTING_CHANGED") break;
+                    throw new IOException(response.Error?.Message ?? "The guest listing failed.");
+                }
+                entries.AddRange(response.Entries);
+                if (entries.Count > 10_000) throw new IOException("The guest listing exceeded the supported 10,000-item limit.");
+                cursor = response.NextCursor;
+                if (string.IsNullOrWhiteSpace(cursor)) return entries;
+            }
+        }
+        throw new IOException("The guest directory changed repeatedly while it was being listed. Retry after changes settle.");
     }
 
     private void AddTransfer(TransferJob job)
@@ -555,10 +611,15 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         HostEntries.Clear();
         try
         {
+            const int limit = 10_000;
             var directory = new DirectoryInfo(HostPath);
-            foreach (var child in directory.EnumerateDirectories().OrderBy(item => item.Name).Take(100))
+            var directories = directory.EnumerateDirectories().OrderBy(item => item.Name).Take(limit + 1).ToArray();
+            if (directories.Length > limit) throw new IOException($"The host folder exceeds the supported {limit:N0}-item limit.");
+            var files = directory.EnumerateFiles().OrderBy(item => item.Name).Take(limit - directories.Length + 1).ToArray();
+            if (directories.Length + files.Length > limit) throw new IOException($"The host folder exceeds the supported {limit:N0}-item limit.");
+            foreach (var child in directories)
                 HostEntries.Add(new HostFileItem(child.Name, "Folder", "Folder", child.FullName));
-            foreach (var child in directory.EnumerateFiles().OrderBy(item => item.Name).Take(100 - HostEntries.Count))
+            foreach (var child in files)
                 HostEntries.Add(new HostFileItem(child.Name, "File", FormatSize(child.Length), child.FullName));
         }
         catch (Exception exception) { ShowError(exception); }
@@ -591,6 +652,8 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         if (!IsActiveInstance(instanceName)) return;
         SandboxStatus = sandbox?.State.ToString() ?? "Not provisioned";
         CanOperateSandbox = sandbox is not null;
+        CanStartSandbox = sandbox?.State is SandboxState.Stopped or SandboxState.Suspended;
+        CanStopSandbox = sandbox?.State is SandboxState.Running or SandboxState.Starting;
         var configuredImage = LinuxImages.GetRequired(settings.ImageId);
         var hardeningName = HardeningPresets.Describe(settings.Hardening);
         SandboxDetail = sandbox is null

@@ -1,6 +1,6 @@
 # Privacy and system changes
 
-Agent Sandbox has no application telemetry. It stores non-secret settings, operation history, and redacted rolling logs locally. Diagnostic export is initiated by the user and produces a local archive; the app does not upload it.
+Agent Sandbox has no application telemetry. It stores non-secret settings, operation history, generated partial/overwrite recovery journals and an empty transfer lock file, and redacted rolling logs locally. Diagnostic export is initiated by the user and produces a local archive; the app does not upload it.
 
 ## System changes
 

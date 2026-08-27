@@ -5,6 +5,7 @@ First-run setup never resolves a mutable `latest` installer or runtime tag.
 | Component | Version | Immutable source | Integrity |
 | --- | --- | --- | --- |
 | Canonical Multipass for Windows x64 | 1.16.3 | `https://github.com/canonical/multipass/releases/download/v1.16.3/multipass-1.16.3+win-win64.msi` | SHA-256 `F5BFF63D13FB1377A72B8DD6D277BBDD3369B1F278F4C85D2C8427A2E7D38D39`; valid Canonical Authenticode signature and certificate chain required |
+| Microsoft WinAppDriver (CI only) | 1.2.1 | `https://github.com/microsoft/WinAppDriver/releases/download/v1.2.1/WindowsApplicationDriver_1.2.1.msi` | SHA-256 `A76A8F4E44B29BAD331ACF6B6C248FCC65324F502F28826AD2ACD5F3C80857FE` |
 | Node.js Linux x64 | 22.23.2 LTS | `https://nodejs.org/download/release/v22.23.2/node-v22.23.2-linux-x64.tar.xz` | SHA-256 `d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307` |
 | Debian generic cloud image x64 | 13, build 20260826-2582 | `https://cloud.debian.org/images/cloud/trixie/20260826-2582/debian-13-generic-amd64-20260826-2582.qcow2` | Official Debian HTTPS source; downloaded and cached by Multipass |
 | Arch Linux cloud image x64 | 2026.08.15 build 573966 | `https://geo.mirror.pkgbuild.com/images/v20260815.573966/Arch-Linux-x86_64-cloudimg-20260815.573966.qcow2` | Official Arch Linux HTTPS source; downloaded and cached by Multipass |

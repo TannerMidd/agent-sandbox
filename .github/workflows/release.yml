@@ -12,8 +12,23 @@ permissions:
 jobs:
   release:
     runs-on: windows-2025
+    environment: beta-release
     steps:
       - uses: actions/checkout@v6
+      - name: Validate release tag and beta evidence
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_name }}" -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+            throw "Release tags must use vMAJOR.MINOR.PATCH."
+          }
+          $version = $Matches.version
+          if (Select-String -Quiet -SimpleMatch '| Pending |' docs/TEST-MATRIX.md) {
+            throw "The physical Windows beta matrix still contains Pending results."
+          }
+          if (Select-String -Quiet -SimpleMatch 'not yet a publishable public beta' docs/IMPLEMENTATION-STATUS.md) {
+            throw "Implementation status has not approved a public beta."
+          }
+          "RELEASE_VERSION=$version" | Add-Content $env:GITHUB_ENV
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
@@ -23,15 +38,21 @@ jobs:
       - name: Restore and test
         run: |
           dotnet restore AgentSandbox.slnx --configfile NuGet.Config
-          dotnet test tests/AgentSandbox.Domain.Tests/AgentSandbox.Domain.Tests.csproj --no-restore -p:CI=true
-          dotnet test tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj --no-restore -p:CI=true
-          dotnet test tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj --no-restore -p:CI=true
-          dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --no-restore -p:CI=true
+          dotnet test tests/AgentSandbox.Domain.Tests/AgentSandbox.Domain.Tests.csproj --no-restore -p:CI=true -p:Version=${{ env.RELEASE_VERSION }} -p:VersionPrefix=${{ env.RELEASE_VERSION }}
+          dotnet test tests/AgentSandbox.Application.Tests/AgentSandbox.Application.Tests.csproj --no-restore -p:CI=true -p:Version=${{ env.RELEASE_VERSION }} -p:VersionPrefix=${{ env.RELEASE_VERSION }}
+          dotnet test tests/AgentSandbox.Infrastructure.Tests/AgentSandbox.Infrastructure.Tests.csproj --no-restore -p:CI=true -p:Version=${{ env.RELEASE_VERSION }} -p:VersionPrefix=${{ env.RELEASE_VERSION }}
+          dotnet test tests/AgentSandbox.Ui.Tests/AgentSandbox.Ui.Tests.csproj --no-restore -p:CI=true -p:Version=${{ env.RELEASE_VERSION }} -p:VersionPrefix=${{ env.RELEASE_VERSION }}
           python tests/guest_helper_tests.py
       - name: Publish x64 app and helper
-        run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:PublishDir=${{ github.workspace }}\artifacts\publish\
+        run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:Version=${{ env.RELEASE_VERSION }} -p:VersionPrefix=${{ env.RELEASE_VERSION }} -p:PublishDir=${{ github.workspace }}\artifacts\publish\
+      - name: Install pinned WinAppDriver
+        shell: pwsh
+        run: .\scripts\install-winappdriver.ps1
+      - name: Smoke-test published WinUI interactions
+        shell: pwsh
+        run: .\scripts\winappdriver-smoke.ps1 -AppPath "${{ github.workspace }}\artifacts\publish\AgentSandbox.App.exe"
       - name: Build unsigned installer
-        run: dotnet build installer/AgentSandbox.Installer.wixproj -c Release -p:PublishDir=${{ github.workspace }}\artifacts\publish
+        run: dotnet build installer/AgentSandbox.Installer.wixproj -c Release -p:PublishDir=${{ github.workspace }}\artifacts\publish -p:PackageVersion=${{ env.RELEASE_VERSION }}
       - name: Create diagnostic archive and checksums
         shell: pwsh
         run: |
@@ -44,7 +65,7 @@ jobs:
       - name: Generate SPDX SBOM
         run: |
           dotnet tool install --global Microsoft.Sbom.DotNetTool
-          sbom-tool generate -b artifacts -bc . -pn AgentSandbox -pv ${{ github.ref_name }} -ps AgentSandbox -nsb https://github.com/${{ github.repository }}
+          sbom-tool generate -b artifacts -bc . -pn AgentSandbox -pv ${{ env.RELEASE_VERSION }} -ps AgentSandbox -nsb https://github.com/${{ github.repository }}
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@v3
         with:
@@ -58,8 +79,9 @@ jobs:
           generate_release_notes: true
           prerelease: true
           body: |
-            Windows x64 public beta. The installer is unsigned and may trigger SmartScreen.
-            Verify the attached SHA-256 files and GitHub artifact attestations before running it.
+            Windows x64 prerelease built after the repository's beta-evidence gate passed.
+            The installer is unsigned and may trigger SmartScreen. Verify the attached SHA-256 files
+            and GitHub artifact attestations before running it.
           files: |
             artifacts/AgentSandbox-x64-unsigned.msi
             artifacts/AgentSandbox-x64-unsigned.msi.sha256

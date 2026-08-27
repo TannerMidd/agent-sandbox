@@ -141,41 +141,46 @@ public sealed class SetupCoordinator(
         var validationErrors = resources.Validate(
             Environment.ProcessorCount,
             host.TotalMemoryBytes,
-            freeDiskBytes?.Invoke(cloudInitPath) ?? GetFreeDiskBytes(cloudInitPath),
+            freeDiskBytes?.Invoke(host.MultipassStoragePath ?? cloudInitPath) ?? GetFreeDiskBytes(host.MultipassStoragePath ?? cloudInitPath),
             image.MinimumResources).ToList();
         validationErrors.AddRange(ValidateAggregateResources(settings.Sandboxes, resources, Environment.ProcessorCount, host.TotalMemoryBytes));
         if (validationErrors.Count > 0)
             throw new InvalidOperationException(string.Join(Environment.NewLine, validationErrors));
 
         var initialProvision = settings.Sandboxes.Count == 0;
+        var previousSettings = settings;
         var request = new ProvisionRequest(instanceName, imageReference, resources, cloudInitPath, "clean", image.IsUserSupplied, hardening);
-        if (initialProvision)
+        var configuration = new SandboxConfiguration(instanceName, resources, [], ImageId: image.Id, CustomImageUrl: image.IsUserSupplied ? imageReference : null, Hardening: hardening, PendingPresetIds: presetIds.ToArray(), ProvisioningComplete: false);
+        settings = UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with
         {
-            settings = settings with
-            {
-                InstanceName = instanceName,
-                ImageId = image.Id,
-                CustomImageUrl = image.IsUserSupplied ? imageReference : null,
-                Hardening = hardening,
-                Resources = resources,
-                SelectedPresetIds = presetIds,
-                SetupState = SetupState.Provisioning
-            };
-            await settingsStore.SaveAsync(settings, cancellationToken);
-        }
+            SetupState = SetupState.Provisioning
+        };
+        await settingsStore.SaveAsync(settings, cancellationToken);
 
-        var configuration = new SandboxConfiguration(instanceName, resources, [], ImageId: image.Id, CustomImageUrl: image.IsUserSupplied ? imageReference : null, Hardening: hardening);
         var provisionResult = await multipass.ProvisionAsync(request, progress, cancellationToken);
         if (provisionResult.State != OperationState.Succeeded)
         {
-            settings = provisionResult.State == OperationState.CleanupPending
-                ? UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with { SetupState = SetupState.NeedsReview }
-                : settings with { SetupState = initialProvision ? SetupState.NeedsReview : SetupState.Ready };
+            if (provisionResult.State == OperationState.CleanupPending)
+            {
+                settings = settings with { SetupState = SetupState.NeedsReview };
+            }
+            else if (initialProvision)
+            {
+                settings = settings with { Sandboxes = [], SetupState = SetupState.NeedsReview };
+            }
+            else
+            {
+                settings = previousSettings with { SetupState = SetupState.Ready };
+            }
             await settingsStore.SaveAsync(settings, cancellationToken);
             return provisionResult;
         }
 
-        settings = UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with
+        configuration = configuration with { ProvisioningComplete = true };
+        settings = UpdateActive(settings with
+        {
+            Sandboxes = settings.Sandboxes.Select(item => item.InstanceName == instanceName ? configuration : item).ToArray()
+        }, configuration) with
         {
             SetupState = presetIds.Count > 0 ? SetupState.InstallingPresets : SetupState.Ready
         };
@@ -199,7 +204,7 @@ public sealed class SetupCoordinator(
                 await settingsStore.SaveAsync(settings with { SetupState = SetupState.NeedsReview }, cancellationToken);
                 return presetResult;
             }
-            configuration = configuration with { SelectedPresetIds = presetIds.ToArray() };
+            configuration = configuration with { SelectedPresetIds = presetIds.ToArray(), PendingPresetIds = [] };
             settings = UpdateActive(settings with
             {
                 Sandboxes = settings.Sandboxes.Select(item => item.InstanceName == instanceName ? configuration : item).ToArray()
@@ -208,6 +213,60 @@ public sealed class SetupCoordinator(
         }
 
         return provisionResult with { Title = $"{instanceName} is ready", UpdatedAt = DateTimeOffset.UtcNow };
+    }
+
+    public async Task<OperationProgress> RetryPendingPresetsAsync(
+        string instanceName,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateInstanceName(instanceName);
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
+        var configuration = settings.Sandboxes.SingleOrDefault(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Sandbox '{instanceName}' is not managed by Agent Sandbox.");
+        var pending = configuration.PendingPresetIds ?? [];
+        if (!configuration.ProvisioningComplete)
+            throw new InvalidOperationException("Provisioning did not complete; rebuild the preserved partial VM after reviewing diagnostics.");
+        if (pending.Count == 0) throw new InvalidOperationException("This sandbox has no pending preset installation to retry.");
+        var sandbox = await multipass.GetSandboxAsync(instanceName, cancellationToken)
+            ?? throw new InvalidOperationException($"Exact sandbox '{instanceName}' no longer exists.");
+        if (sandbox.State != SandboxState.Running)
+        {
+            var started = await multipass.StartAsync(instanceName, progress, cancellationToken);
+            if (started.State != OperationState.Succeeded) return started;
+        }
+        settings = UpdateActive(settings, configuration) with { SetupState = SetupState.InstallingPresets };
+        await settingsStore.SaveAsync(settings, cancellationToken);
+        OperationProgress result;
+        try
+        {
+            result = await presets.InstallAsync(instanceName, pending, progress, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            result = new OperationProgress(
+                Guid.NewGuid(), "Install agent presets",
+                exception is OperationCanceledException ? OperationState.Canceled : OperationState.Failed,
+                "Preset installation failed", null, null, null, "PRESET_INSTALL_FAILED", exception.Message, DateTimeOffset.UtcNow);
+        }
+        if (result.State == OperationState.Succeeded)
+        {
+            configuration = configuration with
+            {
+                SelectedPresetIds = configuration.SelectedPresetIds.Concat(pending).Distinct(StringComparer.Ordinal).ToArray(),
+                PendingPresetIds = []
+            };
+            settings = UpdateActive(settings with
+            {
+                Sandboxes = settings.Sandboxes.Select(item => item.InstanceName == instanceName ? configuration : item).ToArray()
+            }, configuration) with { SetupState = SetupState.Ready };
+        }
+        else
+        {
+            settings = settings with { SetupState = SetupState.NeedsReview };
+        }
+        await settingsStore.SaveAsync(settings, cancellationToken);
+        return result;
     }
 
     public async Task<OperationProgress> DeleteSandboxAsync(string instanceName, CancellationToken cancellationToken = default)

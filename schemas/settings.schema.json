@@ -17,6 +17,8 @@
           "instanceName": { "type": "string", "pattern": "^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" },
           "resources": { "$ref": "#/$defs/resources" },
           "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+          "pendingPresetIds": { "type": ["array", "null"], "uniqueItems": true, "items": { "type": "string" } },
+          "provisioningComplete": { "type": "boolean" },
           "importedLegacyInstance": { "type": "boolean" },
           "imageId": { "$ref": "#/$defs/imageId" },
           "customImageUrl": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },

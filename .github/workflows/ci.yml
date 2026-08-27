@@ -37,6 +37,12 @@ jobs:
         run: python tests/guest_helper_tests.py
       - name: Publish x64 app and helper
         run: dotnet publish src/AgentSandbox.App/AgentSandbox.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:CI=true -p:PublishDir=${{ github.workspace }}\artifacts\publish\
+      - name: Install pinned WinAppDriver
+        shell: pwsh
+        run: .\scripts\install-winappdriver.ps1
+      - name: Smoke-test published WinUI interactions
+        shell: pwsh
+        run: .\scripts\winappdriver-smoke.ps1 -AppPath "${{ github.workspace }}\artifacts\publish\AgentSandbox.App.exe"
       - name: Build installable test package
         run: dotnet build installer/AgentSandbox.Installer.wixproj --configuration Release --no-restore -p:PublishDir=${{ github.workspace }}\artifacts\publish -p:PackageVersion=0.1.${{ github.run_number }}
       - name: Create package checksum
