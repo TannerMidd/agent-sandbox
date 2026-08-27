@@ -12,7 +12,7 @@ public static class GuestFileOperations
 {
     public static readonly ISet<string> Allowed = new HashSet<string>(StringComparer.Ordinal)
     {
-        "list", "stat", "search", "upload", "download", "mkdir", "createFile", "rename",
+        "list", "stat", "search", "upload", "download", "stageDownload", "mkdir", "createFile", "rename",
         "copy", "move", "trash", "restore", "purge", "readText", "writeText", "chmod",
         "archive", "extract"
     };

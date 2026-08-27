@@ -24,3 +24,8 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Made the dashboard summary responsive so connection and terminal controls remain usable at high display scaling and minimum window width.
 - Aligned the active-VM picker with its adjacent dashboard actions.
 - Added live CPU, memory, and disk usage visuals for the active running VM.
+- Restricted Multipass discovery to the protected Canonical installation with Authenticode verification and moved installer authorization into the compiled elevated helper.
+- Added request-correlated helper responses, protected-install enforcement, secured installer execution, exact hardening-artifact/effective-control verification, exact VM resource discovery, storage-volume checks, persisted multi-VM provisioning recovery, and retryable interrupted preset installation.
+- Added request-scoped guest download staging, host/guest SHA-256 comparison, cross-process transfer serialization, retryable host-partial cleanup, crash-recoverable host/guest overwrite transactions, and complete bounded host/guest listings.
+- Added exact-target snapshot deletion plus stop-and-resume snapshot creation and restore.
+- Added strict release evidence/version gates and a pinned WinAppDriver published-WinUI interaction test; preview builds no longer claim public-beta approval.

@@ -6,7 +6,7 @@
     UpgradeCode="7B15B70C-785B-4BC1-96B5-186672C47A79"
     Language="1033"
     Scope="perMachine">
-    <SummaryInformation Description="Agent Sandbox public beta (unsigned)" Manufacturer="Agent Sandbox contributors" />
+    <SummaryInformation Description="Agent Sandbox development preview (unsigned)" Manufacturer="Agent Sandbox contributors" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of Agent Sandbox is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 

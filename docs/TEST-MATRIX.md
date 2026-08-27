@@ -6,9 +6,11 @@ The beta is publishable only after every selected workflow below has a recorded 
 
 - Domain setup transitions, resource limits, hardening preset/option invariants, target names, path components, and read-only roots
 - Application resume and exact legacy import policy
-- Infrastructure atomic settings, separated process arguments, fail-closed cloud-init hardening rendering, and diagnostic redaction
-- Guest helper Unicode, spaces, newline preservation, cursor revisions, symlink parents, and trash/restore
-- WinUI build, setup-helper build, WiX build, checksums, SBOM, and attestations
+- Infrastructure atomic settings, exact Multipass resource parsing, storage-volume selection, list-only partial-VM detection, protected signed executable discovery, protected helper location, helper-compiled/secured installer identity, exact hardening-artifact and effective-control verification, separated process arguments, and diagnostic redaction
+- Guest helper Unicode, spaces, newline preservation, cursor revisions, request-scoped SHA-256 download staging, serialized crash-recoverable replacement transactions, active-staging preservation, symlink/control paths, and trash/restore
+- Host cross-process transfer lease, retryable crash-journal cleanup, directory-overwrite recovery, and digest reproduction tests
+- WinUI build and pinned/hash-verified WinAppDriver interaction test (published-app launch, accessibility names, navigation click, resulting view), setup-helper build, WiX build, checksums, SBOM, and attestations
+- Release workflow fails closed while this matrix contains pending physical results
 
 ## Manual hardware matrix
 

@@ -35,8 +35,11 @@ public sealed class TerminalService(IMultipassLocator locator) : ITerminalServic
         return Task.CompletedTask;
     }
 
-    public static string WindowsTerminalAliasPath(string localApplicationData) =>
-        Path.Combine(Path.GetFullPath(localApplicationData), "Microsoft", "WindowsApps", "wt.exe");
+    public static string WindowsTerminalAliasPath(string localApplicationData)
+    {
+        if (string.IsNullOrWhiteSpace(localApplicationData)) throw new ArgumentException("A local application-data path is required.", nameof(localApplicationData));
+        return localApplicationData.TrimEnd('\\', '/') + @"\Microsoft\WindowsApps\wt.exe";
+    }
 
     private static IReadOnlyList<string> ShellArguments(string instanceName) =>
         ["exec", instanceName, "--", "bash", "-lc", GuestShellCommand];

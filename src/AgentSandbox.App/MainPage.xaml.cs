@@ -104,6 +104,18 @@ public sealed partial class MainPage : Page
                     await MessageAsync("Setup in progress", "The current provisioning operation is resumable. Keep this window open while the VM is prepared.");
                     break;
                 case SetupState.NeedsReview:
+                    var active = ViewModel.Sandboxes.SingleOrDefault(item =>
+                        string.Equals(item.InstanceName, ViewModel.CurrentSettings.InstanceName, StringComparison.Ordinal));
+                    if (active is { ProvisioningComplete: true, PendingPresetIds.Count: > 0 })
+                    {
+                        var names = string.Join(", ", active.PendingPresetIds);
+                        if (await Dialog("Finish sandbox setup?", $"The VM is healthy, but these optional tools remain pending: {names}. Retry their verified installation now?", "Retry installation", "Later").ShowAsync() == ContentDialogResult.Primary)
+                        {
+                            var progress = new Progress<OperationProgress>(item => ViewModel.OperationLabel = item.Percent is null ? item.Phase : $"{item.Phase} • {item.Percent}%");
+                            await ViewModel.RetryPendingPresetsAsync(progress);
+                        }
+                        break;
+                    }
                     var legacy = await ViewModel.InspectLegacyImportAsync();
                     if (legacy is not null &&
                         ViewModel.Sandboxes.Count == 0 &&
@@ -171,7 +183,7 @@ public sealed partial class MainPage : Page
             return;
         }
 
-        var storageRoot = Path.GetPathRoot(ViewModel.CurrentSettings.StoragePath ?? AppContext.BaseDirectory)!;
+        var storageRoot = Path.GetPathRoot(ViewModel.CurrentSettings.StoragePath ?? host.MultipassStoragePath ?? AppContext.BaseDirectory)!;
         var recommendation = ResourceProfile.Recommend(Environment.ProcessorCount, host.AvailableMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
         var selectedImage = LinuxImages.GetRequired(ViewModel.CurrentSettings.ImageId);
         var imageDescription = new TextBlock
@@ -575,6 +587,16 @@ public sealed partial class MainPage : Page
         if (await Dialog("Restore snapshot destructively?", confirmation, "Restore", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
         if (!string.Equals(confirmation.Text, exact, StringComparison.Ordinal)) { await MessageAsync("Confirmation did not match", "No changes were made."); return; }
         await TryAsync(() => ViewModel.RestoreSnapshotAsync(snapshot));
+    }
+
+    private async void DeleteSnapshot_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SnapshotInfo snapshot) return;
+        var exact = $"{snapshot.InstanceName}.{snapshot.Name}";
+        var confirmation = new TextBox { Header = $"Type {exact} to permanently delete", PlaceholderText = exact };
+        if (await Dialog("Delete snapshot permanently?", confirmation, "Delete snapshot", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
+        if (!string.Equals(confirmation.Text, exact, StringComparison.Ordinal)) { await MessageAsync("Confirmation did not match", "No changes were made."); return; }
+        await TryAsync(() => ViewModel.DeleteSnapshotAsync(snapshot));
     }
 
     private async void ReviewTrash_Click(object sender, RoutedEventArgs e) => await ShowTrashAsync();

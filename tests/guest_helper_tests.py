@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import pathlib
@@ -79,6 +80,81 @@ class GuestHelperTests(unittest.TestCase):
         created = self.call(op="writeText", relativePath=["--danger"], content="data")
         self.assertTrue(created["ok"])
         self.assertEqual("data", self.call(op="readText", relativePath=["--danger"])["content"])
+
+    def test_reconcile_does_not_remove_active_staging(self):
+        active = self.root / ".agent-sandbox" / "staging" / ("c" * 32)
+        active.mkdir(parents=True)
+        (active / "data").write_text("active", encoding="utf-8")
+        response = self.call(content="reconcile")
+        self.assertTrue(response["ok"])
+        self.assertTrue(active.exists())
+
+    def test_overwrite_move_commits_through_replacement_journal(self):
+        (self.root / "source.txt").write_text("new", encoding="utf-8")
+        (self.root / "destination.txt").write_text("old", encoding="utf-8")
+        response = self.call(op="move", relativePath=["source.txt"], destinationPath=["destination.txt"], conflict="overwrite")
+        self.assertTrue(response["ok"])
+        self.assertEqual("new", (self.root / "destination.txt").read_text(encoding="utf-8"))
+        replacements = self.root / ".agent-sandbox" / "staging" / "replacements"
+        self.assertEqual([], list(replacements.iterdir()))
+
+    def test_interrupted_overwrite_transaction_finishes_on_next_request(self):
+        control = self.root / ".agent-sandbox"
+        transaction = control / "staging" / "replacements" / ("d" * 32)
+        transaction.mkdir(parents=True)
+        (transaction / "new").write_text("new", encoding="utf-8")
+        (transaction / "backup").write_text("old", encoding="utf-8")
+        (transaction / "transaction.json").write_text(json.dumps({
+            "source": ["stage.txt"], "destination": ["destination.txt"], "phase": "backedUp", "copy": False
+        }), encoding="utf-8")
+        response = self.call()
+        self.assertTrue(response["ok"])
+        self.assertEqual("new", (self.root / "destination.txt").read_text(encoding="utf-8"))
+        self.assertFalse(transaction.exists())
+
+    def test_interrupted_copy_never_promotes_partial_content(self):
+        destination = self.root / "destination.txt"
+        destination.write_text("original", encoding="utf-8")
+        transaction = self.root / ".agent-sandbox" / "staging" / "replacements" / ("e" * 32)
+        transaction.mkdir(parents=True)
+        (transaction / "new").write_text("partial", encoding="utf-8")
+        (transaction / "transaction.json").write_text(json.dumps({
+            "source": ["source.txt"], "destination": [destination.name], "phase": "preparing", "copy": True
+        }), encoding="utf-8")
+        response = self.call()
+        self.assertTrue(response["ok"])
+        self.assertEqual("original", destination.read_text(encoding="utf-8"))
+        self.assertFalse(transaction.exists())
+
+    def test_download_staging_is_immutable_and_digest_verified(self):
+        source = self.root / "project.txt"
+        source.write_text("original Ω", encoding="utf-8")
+        inspected = self.call(op="download", relativePath=[source.name])["entries"][0]
+        job = "a" * 32
+        staged = self.call(
+            op="stageDownload",
+            relativePath=[source.name],
+            destinationPath=[".agent-sandbox", "staging", "downloads", job, source.name],
+            expected={"kind": inspected["kind"], "size": inspected["size"], "mtimeNs": inspected["mtimeNs"], "mode": inspected["mode"]},
+        )
+        self.assertTrue(staged["ok"])
+        expected = hashlib.sha256(b"agent-sandbox-file-v1\0" + "original Ω".encode()).hexdigest()
+        self.assertEqual(expected, staged["content"])
+        source.write_text("changed", encoding="utf-8")
+        self.assertEqual("original Ω", (self.root / ".agent-sandbox" / "staging" / "downloads" / job / source.name).read_text(encoding="utf-8"))
+
+    def test_download_staging_rejects_changed_source(self):
+        source = self.root / "changed.bin"
+        source.write_bytes(b"first")
+        inspected = self.call(op="download", relativePath=[source.name])["entries"][0]
+        source.write_bytes(b"other!")
+        staged = self.call(
+            op="stageDownload",
+            relativePath=[source.name],
+            destinationPath=[".agent-sandbox", "staging", "downloads", "b" * 32, source.name],
+            expected={"kind": inspected["kind"], "size": inspected["size"], "mtimeNs": inspected["mtimeNs"], "mode": inspected["mode"]},
+        )
+        self.assertEqual("SOURCE_CHANGED", staged["error"]["code"])
 
     def test_changed_text_source_is_rejected(self):
         path = self.root / "conflict.txt"

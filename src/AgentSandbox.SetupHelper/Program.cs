@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
@@ -24,16 +25,17 @@ internal static class SetupHelperProgram
         using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
         var line = await reader.ReadLineAsync();
+        SetupHelperRequest? request = null;
         SetupHelperResponse response;
         try
         {
-            var request = JsonSerializer.Deserialize<SetupHelperRequest>(line ?? "")
+            request = JsonSerializer.Deserialize<SetupHelperRequest>(line ?? "")
                 ?? throw new InvalidDataException("The setup request was empty.");
             response = await ExecuteAsync(request);
         }
         catch (Exception exception)
         {
-            response = new SetupHelperResponse(1, Guid.Empty, false, false,
+            response = new SetupHelperResponse(1, request?.RequestId ?? Guid.Empty, false, false,
                 [new DiagnosticRecord("HELPER_FAILURE", "Setup operation failed", DiagnosticSeverity.Error, exception.Message)],
                 "HELPER_FAILURE");
         }
@@ -79,44 +81,95 @@ internal static class SetupHelperProgram
 
     private static async Task<SetupHelperResponse> InstallMultipassAsync(SetupHelperRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.ExpectedSha256) || request.ExpectedSha256.Length != 64)
-            return Failure(request, "INSTALLER_HASH_MISSING", "A pinned SHA-256 value is required.");
-        var path = ValidateLocalNtfsPath(request.InstallerPath, mustExist: true);
-        if (!string.Equals(Path.GetExtension(path), ".msi", StringComparison.OrdinalIgnoreCase))
-            return Failure(request, "INSTALLER_TYPE", "Only a local MSI installer is accepted.");
+        var approved = MultipassInstallerService.PinnedRelease;
+        if (!string.Equals(request.ExpectedSha256, approved.Sha256, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(request.ExpectedPublisher, approved.Publisher, StringComparison.Ordinal))
+            return Failure(request, "INSTALLER_IDENTITY", "The request does not match the helper's compiled Multipass release identity.");
+        var sourcePath = ValidateLocalNtfsPath(request.InstallerPath, mustExist: true);
+        if (!string.Equals(Path.GetExtension(sourcePath), ".msi", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Path.GetFileName(sourcePath), approved.FileName, StringComparison.Ordinal))
+            return Failure(request, "INSTALLER_TYPE", "Only the exact compiled Multipass MSI release is accepted.");
 
-        await using var stream = File.OpenRead(path);
-        var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(stream));
-        if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualHash), Encoding.ASCII.GetBytes(request.ExpectedSha256.ToUpperInvariant())))
-            return Failure(request, "INSTALLER_HASH", "The Multipass installer SHA-256 did not match the pinned value.");
-
+        var (secureDirectory, path) = CreateSecuredInstallerCopy(sourcePath, approved.FileName);
         try
         {
-            if (!VerifyAuthenticode(path))
-                return Failure(request, "INSTALLER_SIGNATURE", "Windows could not validate the installer's Authenticode signature.");
-            // CreateFromSignedFile is the only BCL API that extracts an Authenticode signer
-            // certificate; WinVerifyTrust has already validated the signed file above.
-#pragma warning disable SYSLIB0057
-            using var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
-#pragma warning restore SYSLIB0057
-            using var chain = new X509Chain();
-            chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
-            var publisherMatches = !string.IsNullOrWhiteSpace(request.ExpectedPublisher) && certificate.Subject.Contains(request.ExpectedPublisher, StringComparison.OrdinalIgnoreCase);
-            if (!publisherMatches || !chain.Build(certificate))
-                return Failure(request, "INSTALLER_SIGNATURE", "The installer publisher or certificate chain could not be verified.");
-        }
-        catch (CryptographicException)
-        {
-            return Failure(request, "INSTALLER_SIGNATURE", "The installer does not have a valid Authenticode certificate.");
-        }
+            await using (var stream = File.OpenRead(path))
+            {
+                var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(stream));
+                if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualHash), Encoding.ASCII.GetBytes(approved.Sha256)))
+                    return Failure(request, "INSTALLER_HASH", "The Multipass installer SHA-256 did not match the compiled value.");
+            }
 
-        var result = await new ProcessRunner().RunAsync(
-            Path.Combine(Environment.SystemDirectory, "msiexec.exe"),
-            ["/i", path, "/passive", "/norestart"], timeout: TimeSpan.FromMinutes(15));
-        return result.IsSuccess
-            ? Success(request, result.ExitCode == 3010, "Canonical Multipass was installed.")
-            : Failure(request, "MULTIPASS_INSTALL", Redact(result.StandardError));
+            try
+            {
+                if (!VerifyAuthenticode(path))
+                    return Failure(request, "INSTALLER_SIGNATURE", "Windows could not validate the installer's Authenticode signature.");
+                // CreateFromSignedFile is the only BCL API that extracts an Authenticode signer
+                // certificate; WinVerifyTrust has already validated the signed file above.
+#pragma warning disable SYSLIB0057
+                using var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+#pragma warning restore SYSLIB0057
+                using var chain = new X509Chain();
+                chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+                chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                var publisherMatches = certificate.Subject.Contains(approved.Publisher, StringComparison.OrdinalIgnoreCase);
+                if (!publisherMatches || !chain.Build(certificate))
+                    return Failure(request, "INSTALLER_SIGNATURE", "The installer publisher or certificate chain could not be verified.");
+            }
+            catch (CryptographicException)
+            {
+                return Failure(request, "INSTALLER_SIGNATURE", "The installer does not have a valid Authenticode certificate.");
+            }
+
+            var result = await new ProcessRunner().RunAsync(
+                Path.Combine(Environment.SystemDirectory, "msiexec.exe"),
+                ["/i", path, "/passive", "/norestart"], timeout: TimeSpan.FromMinutes(15));
+            return result.IsSuccess
+                ? Success(request, result.ExitCode == 3010, "Canonical Multipass was installed.")
+                : Failure(request, "MULTIPASS_INSTALL", Redact(result.StandardError));
+        }
+        finally
+        {
+            try { Directory.Delete(secureDirectory, recursive: true); } catch { }
+        }
+    }
+
+    private static (string Directory, string Installer) CreateSecuredInstallerCopy(string sourcePath, string fileName)
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AgentSandbox");
+        var installers = Path.Combine(root, "Installers");
+        SecureDirectory(root);
+        SecureDirectory(installers);
+        var directory = Path.Combine(installers, Guid.NewGuid().ToString("N"));
+        SecureDirectory(directory);
+        var destination = Path.Combine(directory, fileName);
+        File.Copy(sourcePath, destination, overwrite: false);
+        return (directory, destination);
+    }
+
+    private static void SecureDirectory(string path)
+    {
+        if ((Directory.Exists(path) || File.Exists(path)) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("Secured installer directories cannot be reparse points.");
+        Directory.CreateDirectory(path);
+        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(administrators);
+        const InheritanceFlags inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl,
+            inheritance, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            administrators, FileSystemRights.FullControl,
+            inheritance, PropagationFlags.None, AccessControlType.Allow));
+        var directory = new DirectoryInfo(path);
+        directory.SetAccessControl(security);
+        if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("Secured installer directories cannot be reparse points.");
+        var applied = directory.GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+        if (!administrators.Equals(applied.GetOwner(typeof(SecurityIdentifier))) || !applied.AreAccessRulesProtected)
+            throw new UnauthorizedAccessException("The secured installer directory owner or protected ACL could not be enforced.");
     }
 
     private static string ValidateLocalNtfsPath(string? candidate, bool mustExist)
@@ -128,6 +181,8 @@ internal static class SetupHelperProgram
         if (drive.DriveType != DriveType.Fixed || !string.Equals(drive.DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The path must be on a local fixed NTFS volume.");
         if (mustExist && !File.Exists(fullPath)) throw new FileNotFoundException("The selected file does not exist.", fullPath);
+        if (mustExist && File.GetAttributes(fullPath).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidDataException("Reparse-point installer files are not allowed.");
 
         var current = mustExist ? Directory.GetParent(fullPath) : new DirectoryInfo(fullPath).Parent;
         while (current is not null)

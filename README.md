@@ -11,9 +11,9 @@ Agent Sandbox is a GUI-first Windows app for creating and managing isolated Linu
 - Checks Windows 11 Pro/Enterprise, virtualization, Hyper-V, memory, disk, and Multipass.
 - Resumes setup after a reboot and preserves compatible existing Multipass installations.
 - Creates and switches between user-named Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, Alpine 3.22, and advanced custom cloud-image VMs, with a read-only import preview for the exact legacy name `agent-dev`.
-- Starts and stops the VM, opens a guest terminal, and creates or restores exact-target snapshots.
-- Provides a dual-pane host/guest file workspace with staged, verified transfers and recoverable guest trash.
-- Supports bidirectional drag/drop, queued cancellation, safe conflict handling, UTF-8 editing, permissions, archives, workspace trash/restore, and opt-in read-only system browsing.
+- Starts and stops the VM, opens a guest terminal, and creates, restores, or permanently deletes exact-target snapshots.
+- Provides a dual-pane host/guest file workspace with request-scoped staged downloads, SHA-256 verification, crash-recoverable partial transfers, and recoverable guest trash.
+- Supports bidirectional drag/drop, cross-process transfer serialization, cancellable transfers, crash-recoverable overwrite transactions, safe conflict handling, complete bounded host/guest listings, UTF-8 editing, permissions, archives, workspace trash/restore, and opt-in read-only system browsing.
 - Includes both an embedded ConPTY terminal and an external Windows Terminal action.
 - Offers pinned presets for Codex CLI, Claude Code, Gemini CLI, and Pi. Authentication happens inside the VM.
 - Lets each new VM use Development, Balanced, Restricted, Offline, or custom hardening, with explicit controls for updates, kernel safeguards, audit rules, outbound networking, passwordless administration, and Docker-socket access.
@@ -28,7 +28,7 @@ Agent Sandbox is a GUI-first Windows app for creating and managing isolated Linu
 - At least 6 GiB of memory and 10 GiB of disk space must remain available to Windows
 - Guest architecture must match the host architecture; the current Windows/Multipass release is x64-only and does not emulate ARM64 guests
 
-Windows Home, macOS, Linux hosts, persistent host mounts, automatic storage migration, and host credential forwarding are outside the v1 boundary.
+Windows Home, macOS, Linux hosts, persistent host mounts, automatic storage migration, silent time-based VM deletion, and host credential forwarding are outside the v1 boundary. Disposable environments remain exact-target user actions so an expiration policy cannot unexpectedly erase a workspace.
 
 ## Quick start for users
 
@@ -76,7 +76,7 @@ docs/                            Architecture, threat model, privacy, and operat
 
 Agent Sandbox is a development boundary, not a malware-analysis or hostile multi-tenant boundary. Agent-generated code runs in a Hyper-V VM, but any file downloaded to Windows must still be treated as untrusted.
 
-The app uses component-array guest paths, exact Multipass instance names, non-shell process arguments, fail-closed conflicts, symlink/reparse rejection, staged transfers, bounded archive extraction, and exact-target confirmations. Every new VM denies unsolicited inbound traffic and SSH password/root login; stronger per-VM presets can add automatic updates, kernel restrictions, audit rules, egress filtering, and removal of passwordless administrative access. The elevated helper accepts only compiled allow-listed operations over a current-user/admin ACL-protected named pipe. See [Threat model](docs/THREAT-MODEL.md) and [Architecture](docs/ARCHITECTURE.md).
+The app uses component-array guest paths, exact Multipass instance names, non-shell process arguments, fail-closed conflicts, symlink/reparse rejection, staged transfers, bounded archive extraction, and exact-target confirmations. Every new VM denies unsolicited inbound traffic and SSH password/root login; stronger per-VM presets can add automatic updates, kernel restrictions, audit rules, egress filtering, and removal of passwordless administrative access. The elevated helper runs only from the protected Program Files installation, accepts only compiled allow-listed operations over a current-user/admin ACL-protected named pipe, and authenticates a secured copy of its helper-pinned Multipass installer before execution. See [Threat model](docs/THREAT-MODEL.md) and [Architecture](docs/ARCHITECTURE.md).
 
 ## Project policies
 

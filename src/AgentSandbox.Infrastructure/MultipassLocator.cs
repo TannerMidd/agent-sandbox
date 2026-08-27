@@ -14,21 +14,7 @@ public sealed class MultipassLocator : IMultipassLocator
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
         "Multipass", "bin", "multipass.exe");
 
-    public string? Locate()
-    {
-        if (IsCanonicalExecutable(ExpectedPath)) return ExpectedPath;
-        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            try
-            {
-                var candidate = Path.GetFullPath(Path.Combine(directory, "multipass.exe"));
-                if (IsCanonicalExecutable(candidate)) return candidate;
-            }
-            catch { }
-        }
-        return null;
-    }
+    public string? Locate() => IsCanonicalExecutable(ExpectedPath) ? ExpectedPath : null;
 
     public static bool IsCanonicalExecutable(string path)
     {
@@ -40,12 +26,12 @@ public sealed class MultipassLocator : IMultipassLocator
             if (file.Attributes.HasFlag(FileAttributes.ReparsePoint) ||
                 file.Directory?.Attributes.HasFlag(FileAttributes.ReparsePoint) == true)
                 return false;
+            if (!string.Equals(fullPath, Path.GetFullPath(ExpectedPath), StringComparison.OrdinalIgnoreCase) ||
+                !HasCanonicalWindowsRegistration()) return false;
             var info = FileVersionInfo.GetVersionInfo(path);
-            if ((info.CompanyName?.Contains("Canonical", StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (info.ProductName?.Contains("Multipass", StringComparison.OrdinalIgnoreCase) ?? false))
-                return true;
-            return string.Equals(fullPath, Path.GetFullPath(ExpectedPath), StringComparison.OrdinalIgnoreCase) &&
-                   HasCanonicalWindowsRegistration();
+            return info.CompanyName?.Contains("Canonical", StringComparison.OrdinalIgnoreCase) == true &&
+                   info.ProductName?.Contains("Multipass", StringComparison.OrdinalIgnoreCase) == true &&
+                   WindowsAuthenticodeVerifier.IsTrustedSignedBy(fullPath, "Canonical");
         }
         catch { return false; }
     }

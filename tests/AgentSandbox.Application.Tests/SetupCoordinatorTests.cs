@@ -145,6 +145,19 @@ public sealed class SetupCoordinatorTests
     }
 
     [Fact]
+    public async Task ProvisioningValidatesDiskOnMultipassStorageVolume()
+    {
+        string? inspectedPath = null;
+        var readiness = ReadyHost() with { MultipassStoragePath = @"D:\Multipass" };
+        var coordinator = new SetupCoordinator(new MemorySettings(), new FakePrerequisites(readiness), new FakeMultipass(), new FakePresets(),
+            freeDiskBytes: path => { inspectedPath = path; return 100L << 30; });
+
+        await coordinator.ProvisionAsync("agent-storage", new ResourceProfile(2, 4, 30), []);
+
+        Assert.Equal(readiness.MultipassStoragePath, inspectedPath);
+    }
+
+    [Fact]
     public async Task SelectedLinuxImageIsProvisionedAndPersisted()
     {
         var store = new MemorySettings();
@@ -225,7 +238,34 @@ public sealed class SetupCoordinatorTests
 
         Assert.Equal(OperationState.CleanupPending, result.State);
         Assert.Equal(SetupState.NeedsReview, settings.SetupState);
-        Assert.Equal("agent-sandbox-partial", Assert.Single(settings.Sandboxes).InstanceName);
+        var sandbox = Assert.Single(settings.Sandboxes);
+        Assert.Equal("agent-sandbox-partial", sandbox.InstanceName);
+        Assert.False(sandbox.ProvisioningComplete);
+    }
+
+    [Fact]
+    public async Task PartialAdditionalVmIsPersistedForExactRecovery()
+    {
+        var resources = new ResourceProfile(1, 1, 10);
+        var first = new SandboxInfo("agent-sandbox-one", SandboxState.Running, resources, "10.0.0.2", "Alpine", DateTimeOffset.UtcNow);
+        var store = new MemorySettings(new AgentSandboxSettings
+        {
+            InstanceName = first.InstanceName,
+            SetupState = SetupState.Ready,
+            Sandboxes = [new SandboxConfiguration(first.InstanceName, resources, [])]
+        });
+        var multipass = new FakeMultipass(first) { ProvisionResult = Result(OperationState.CleanupPending, "Partial") };
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+
+        await coordinator.ProvisionAsync("agent-sandbox-two", "alpine-3.22", resources, ["codex"]);
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(SetupState.NeedsReview, settings.SetupState);
+        Assert.Equal("agent-sandbox-two", settings.InstanceName);
+        Assert.Equal(2, settings.Sandboxes.Count);
+        var partial = settings.Sandboxes.Single(item => item.InstanceName == "agent-sandbox-two");
+        Assert.False(partial.ProvisioningComplete);
+        Assert.Equal(["codex"], partial.PendingPresetIds);
     }
 
     [Fact]
@@ -240,7 +280,31 @@ public sealed class SetupCoordinatorTests
 
         Assert.Equal(OperationState.Failed, result.State);
         Assert.Equal(SetupState.NeedsReview, settings.SetupState);
-        Assert.Empty(Assert.Single(settings.Sandboxes).SelectedPresetIds);
+        var sandbox = Assert.Single(settings.Sandboxes);
+        Assert.Empty(sandbox.SelectedPresetIds);
+        Assert.Equal(["codex"], sandbox.PendingPresetIds);
+        Assert.True(sandbox.ProvisioningComplete);
+    }
+
+    [Fact]
+    public async Task FailedPresetInstallationCanResumeWithoutRebuildingVm()
+    {
+        var store = new MemorySettings();
+        var multipass = new FakeMultipass();
+        var failed = new SetupCoordinator(store, new FakePrerequisites(), multipass,
+            new FakePresets(Result(OperationState.Failed, "Preset failed")), freeDiskBytes: _ => 100L << 30);
+        await failed.ProvisionAsync("agent-sandbox-resume", new ResourceProfile(2, 4, 30), ["codex"]);
+        var resumed = new SetupCoordinator(store, new FakePrerequisites(), multipass,
+            new FakePresets(Result(OperationState.Succeeded, "Installed")), freeDiskBytes: _ => 100L << 30);
+
+        var result = await resumed.RetryPendingPresetsAsync("agent-sandbox-resume");
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(OperationState.Succeeded, result.State);
+        Assert.Equal(SetupState.Ready, settings.SetupState);
+        var sandbox = Assert.Single(settings.Sandboxes);
+        Assert.Equal(["codex"], sandbox.SelectedPresetIds);
+        Assert.Empty(sandbox.PendingPresetIds ?? []);
     }
 
     [Fact]
@@ -377,6 +441,7 @@ public sealed class SetupCoordinatorTests
         public Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(string instanceName, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SnapshotInfo>>([]);
         public Task<OperationProgress> CreateSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> RestoreSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<OperationProgress> DeleteSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default)
         {
             if (!sandboxes.Remove(instanceName)) throw new InvalidOperationException("Exact fake sandbox not found.");

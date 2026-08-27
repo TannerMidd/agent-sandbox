@@ -170,22 +170,25 @@ write_files:
       install -d -m 0755 /home/ubuntu/work
       chown -R "$guest_user:$guest_group" /home/ubuntu
 
+      install -d -m 0750 /etc/sudoers.d
       if [ "$allow_administrative_tools" = 'true' ]; then
         if command -v usermod >/dev/null 2>&1; then
           usermod -aG docker "$guest_user"
         else
           addgroup "$guest_user" docker
         fi
+        printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$guest_user" > /etc/sudoers.d/zzzz-agent-sandbox-admin
+        chmod 0440 /etc/sudoers.d/zzzz-agent-sandbox-admin
+        rm -f /etc/sudoers.d/zzzz-agent-sandbox-require-password
       else
         if command -v gpasswd >/dev/null 2>&1; then
           gpasswd -d "$guest_user" docker >/dev/null 2>&1 || true
         elif command -v delgroup >/dev/null 2>&1; then
           delgroup "$guest_user" docker >/dev/null 2>&1 || true
         fi
-        if [ -d /etc/sudoers.d ]; then
-          printf '%s ALL=(ALL:ALL) ALL\n' "$guest_user" > /etc/sudoers.d/99-agent-sandbox-require-password
-          chmod 0440 /etc/sudoers.d/99-agent-sandbox-require-password
-        fi
+        rm -f /etc/sudoers.d/zzzz-agent-sandbox-admin
+        printf '%s ALL=(ALL:ALL) ALL\n' "$guest_user" > /etc/sudoers.d/zzzz-agent-sandbox-require-password
+        chmod 0440 /etc/sudoers.d/zzzz-agent-sandbox-require-password
       fi
 
       install -d -m 0755 /etc/ssh/sshd_config.d
@@ -301,6 +304,11 @@ write_files:
           fi
         fi
         ufw --force enable
+        if command -v systemctl >/dev/null 2>&1; then
+          systemctl enable ufw
+        else
+          rc-update add ufw default
+        fi
       elif command -v firewall-cmd >/dev/null 2>&1; then
         firewall-cmd --permanent --remove-service=ssh || true
         firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=${management_gateway}/32 service name=ssh accept"
@@ -332,6 +340,71 @@ write_files:
       {"schemaVersion":1,"presetId":"${hardening_preset}","automaticSecurityUpdates":${automatic_security_updates},"kernelHardening":${kernel_hardening},"restrictUnprivilegedFeatures":${restrict_unprivileged_features},"auditSecurityEvents":${audit_security_events},"networkAccess":"${network_access}","allowAdministrativeTools":${allow_administrative_tools}}
       EOF
       chmod 0644 /etc/agent-sandbox/hardening.json
+
+      cat > /usr/local/sbin/agent-sandbox-verify-runtime <<EOF
+      #!/bin/sh
+      set -eu
+      network_access='${network_access}'
+      automatic_security_updates='${automatic_security_updates}'
+      EOF
+      cat >> /usr/local/sbin/agent-sandbox-verify-runtime <<'EOF'
+      if command -v ufw >/dev/null 2>&1; then
+        ufw status | grep -F 'Status: active' >/dev/null
+        grep -Fx 'ENABLED=yes' /etc/ufw/ufw.conf >/dev/null
+        if command -v systemctl >/dev/null 2>&1; then
+          systemctl is-enabled --quiet ufw
+          systemctl is-active --quiet ufw
+        else
+          rc-update show default | grep -w ufw >/dev/null
+          rc-service ufw status >/dev/null
+        fi
+        if [ "$network_access" = 'unrestricted' ]; then
+          grep -Fx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw >/dev/null
+        else
+          grep -Fx 'DEFAULT_OUTPUT_POLICY="DROP"' /etc/default/ufw >/dev/null
+          if [ "$network_access" = 'web-only' ]; then
+            grep -F -- '--dport 443' /etc/ufw/user.rules >/dev/null
+          else
+            ! grep -F -- '--dport 443' /etc/ufw/user.rules >/dev/null
+          fi
+        fi
+      else
+        systemctl is-enabled --quiet firewalld
+        systemctl is-active --quiet firewalld
+        firewall-cmd --state | grep -Fx 'running' >/dev/null
+        if [ "$network_access" != 'unrestricted' ]; then
+          firewall-cmd --direct --get-all-rules | grep -F -- '-j DROP' >/dev/null
+          if [ "$network_access" = 'web-only' ]; then
+            firewall-cmd --direct --get-all-rules | grep -F -- '--dport 443' >/dev/null
+          else
+            ! firewall-cmd --direct --get-all-rules | grep -F -- '--dport 443' >/dev/null
+          fi
+        fi
+      fi
+      if [ "$automatic_security_updates" = 'true' ]; then
+        if command -v apt-get >/dev/null 2>&1; then
+          grep -F 'APT::Periodic::Unattended-Upgrade "1";' /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
+          systemctl is-enabled --quiet unattended-upgrades
+          systemctl is-active --quiet unattended-upgrades
+        elif command -v dnf >/dev/null 2>&1; then
+          grep -Eq '^apply_updates[[:space:]]*=[[:space:]]*yes' /etc/dnf/automatic.conf
+          systemctl is-enabled --quiet dnf-automatic.timer
+          systemctl is-active --quiet dnf-automatic.timer
+        elif command -v apk >/dev/null 2>&1; then
+          test -x /etc/periodic/daily/agent-sandbox-security-updates
+          rc-update show default | grep -w crond >/dev/null
+          rc-service crond status >/dev/null
+        else
+          test -x /usr/local/sbin/agent-sandbox-security-update
+          systemctl is-enabled --quiet agent-sandbox-security-update.timer
+          systemctl is-active --quiet agent-sandbox-security-update.timer
+        fi
+      fi
+      printf '%s\n' ok
+      EOF
+      chmod 0755 /usr/local/sbin/agent-sandbox-verify-runtime
+      printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/agent-sandbox-verify-runtime\n' "$guest_user" > /etc/sudoers.d/zzzz-agent-sandbox-verifier
+      chmod 0440 /etc/sudoers.d/zzzz-agent-sandbox-verifier
 
 runcmd:
   - [sh, /usr/local/sbin/agent-sandbox-provision]

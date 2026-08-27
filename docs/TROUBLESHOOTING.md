@@ -14,11 +14,15 @@ Export Diagnostics and review the cloud-init and Multipass records. Non-Ubuntu i
 
 ## File transfer was interrupted
 
-Downloads use a `.partial` sibling and uploads use `.agent-sandbox/staging`. The next file operation reconciles stale staging data. The transfer queue records whether cleanup is pending.
+Downloads use a journaled `.partial` sibling and request-scoped guest staging; uploads use `.agent-sandbox/staging`. Cross-process leases prevent connection checks from racing active work. The next successful guest connection retries crash-left host partial cleanup, completes or rolls back interrupted directory replacement, and removes stale guest staging. Operation history records whether cleanup is pending.
+
+## Portable build cannot perform setup
+
+This is intentional: UAC operations are enabled only when the compiled helper is under the protected Program Files installation. Install the MSI to enable Hyper-V, storage, or Multipass setup. A portable diagnostics build can still inspect and manage an already-compatible host without elevation.
 
 ## SmartScreen warns about the installer
 
-Initial public-beta installers are unsigned. Verify the release SHA-256 and GitHub artifact attestation. Do not trust an installer obtained from another location.
+Development-preview installers are unsigned. Verify the release SHA-256 and GitHub artifact attestation. Do not trust an installer obtained from another location.
 
 ## Uninstall left the VM behind
 

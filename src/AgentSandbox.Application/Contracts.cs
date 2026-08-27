@@ -31,6 +31,7 @@ public interface IMultipassService
     Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(string instanceName, CancellationToken cancellationToken = default);
     Task<OperationProgress> CreateSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default);
     Task<OperationProgress> RestoreSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default);
+    Task<OperationProgress> DeleteSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default);
     Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default);
 }
 
@@ -45,6 +46,7 @@ public interface ISandboxLifecycleService
     Task<OperationProgress> ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<OperationProgress> ProvisionAsync(string instanceName, string imageId, string? customImageUrl, ResourceProfile resources, IReadOnlyList<string> presetIds, SandboxHardeningOptions hardening, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
     Task<OperationProgress> DeleteSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
+    Task<OperationProgress> RetryPendingPresetsAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
 }
 
 public interface IGuestFileService

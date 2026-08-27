@@ -51,6 +51,14 @@ public sealed class FakeMultipassService : IMultipassService
         return Task.FromResult(Result("Restore", "Restored", null));
     }
 
+    public Task<OperationProgress> DeleteSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default)
+    {
+        Require(instanceName);
+        var removed = snapshots.RemoveAll(item => item.InstanceName == instanceName && item.Name == snapshotName);
+        if (removed != 1) throw new InvalidOperationException("Exact fake snapshot not found.");
+        return Task.FromResult(Result("Delete snapshot", "Deleted", null));
+    }
+
     public Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default)
     {
         Require(instanceName);

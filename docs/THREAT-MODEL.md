@@ -18,16 +18,16 @@ It is not intended to contain kernel exploits, malicious hypervisor escape resea
 
 - No host credential forwarding or persistent mounts.
 - Every provisioned VM denies unsolicited inbound traffic and disables SSH password authentication, root login, forwarding, and X11 forwarding.
-- Per-VM hardening ranges from a compatibility profile through automatic updates/kernel/audit safeguards to web-only or offline egress and removal of passwordless sudo/Docker-socket access. Custom combinations are explicit and persisted.
+- Per-VM hardening ranges from a compatibility profile through automatic updates/kernel/audit safeguards to web-only or offline egress and removal of general passwordless sudo/Docker-socket access. Restricted profiles retain only an exact no-argument root-owned runtime verifier command so post-restart health checks can read root-only firewall and update state. Custom combinations are explicit and persisted.
 - Offline egress cannot be combined with remote agent presets; contradictory automatic-update/offline configurations fail before launch.
-- No arbitrary commands accepted by the elevated helper.
-- Pinned installer hash plus publisher certificate validation.
+- No arbitrary commands accepted by the elevated helper; portable builds cannot elevate, and installed helper paths must remain under protected Program Files without reparse points.
+- Helper-compiled installer identity, reparse rejection plus enforced Administrators ownership/protected ACLs across the full staging chain, secured MSI copy, pinned hash, and publisher certificate validation before Windows Installer execution.
 - Catalog image allow-list; advanced custom images require credential-free HTTPS and reject loopback hosts.
 - Exact instance/snapshot targeting and explicit destructive confirmations.
 - Read/write guest file management only under `/home/ubuntu/work` by default.
 - Optional system browsing is read-only and never uses sudo.
 - Path components instead of shell strings; symlink/reparse parents are rejected.
-- Upload staging and atomic guest commit; download `.partial`, metadata/size verification, and atomic host rename.
+- Cross-process transfer serialization; upload staging and journaled guest replacement commit; request-scoped download staging, host/guest SHA-256 comparison, retryable `.partial` cleanup, journaled host directory replacement, and atomic host file rename.
 - Archive entry count and expanded-size limits, traversal rejection, and link/special-file rejection.
 - Default conflict policy is `fail`; overwrite is never inferred.
 

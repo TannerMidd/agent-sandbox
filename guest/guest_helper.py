@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -20,7 +21,7 @@ VERSION = 1
 WORK_ROOT = pathlib.Path(os.environ.get("AGENT_SANDBOX_TEST_WORK", "/home/ubuntu/work"))
 ROOTS = {"work": WORK_ROOT, "system": pathlib.Path("/")}
 READ_ONLY = {"list", "stat", "search", "download", "readText"}
-OPS = READ_ONLY | {"upload", "mkdir", "createFile", "rename", "copy", "move", "trash", "restore", "purge", "writeText", "chmod", "archive", "extract"}
+OPS = READ_ONLY | {"upload", "stageDownload", "mkdir", "createFile", "rename", "copy", "move", "trash", "restore", "purge", "writeText", "chmod", "archive", "extract"}
 MAX_TEXT = 5 * 1024 * 1024
 MAX_ENTRIES = 10_000
 MAX_EXPANDED = 2 * 1024 * 1024 * 1024
@@ -28,8 +29,34 @@ WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10
 CONTROL = WORK_ROOT / ".agent-sandbox"
 TRASH = CONTROL / "trash"
 STAGING = CONTROL / "staging"
+REPLACEMENTS = STAGING / "replacements"
 REQUESTS = pathlib.Path(os.environ.get("AGENT_SANDBOX_TEST_REQUESTS", "/home/ubuntu/.local/lib/agent-sandbox/requests"))
 MAX_REQUEST = 8 * 1024 * 1024
+
+
+@contextlib.contextmanager
+def exclusive_file_lock(stream):
+    """Use the platform's process-wide advisory file lock (Linux in guests, Windows in CI)."""
+    if os.name == "nt":
+        import msvcrt
+        stream.seek(0)
+        if stream.read(1) == b"":
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 class ProtocolError(Exception):
@@ -93,6 +120,15 @@ def ensure_regular(path: pathlib.Path, directory_ok: bool = False):
         raise ProtocolError("UNSUPPORTED_TYPE", "Only regular files and directories are supported.")
 
 
+def ensure_control_directory(path: pathlib.Path) -> None:
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise ProtocolError("CONTROL_PATH", "A sandbox control path is not a real directory.")
+    else:
+        path.mkdir(parents=True)
+
+
 def expectation(path: pathlib.Path, expected):
     if expected is None: return
     info = path.lstat()
@@ -126,11 +162,12 @@ def cursor_decode(value: str | None) -> tuple[str | None, int]:
         raise ProtocolError("INVALID_CURSOR", "The listing cursor is invalid.") from error
 
 
-def conflict_target(path: pathlib.Path, policy: str) -> pathlib.Path:
+def conflict_target(path: pathlib.Path, policy: str, preserve_overwrite: bool = False) -> pathlib.Path:
     if not path.exists() and not path.is_symlink(): return path
     if policy == "fail": raise ProtocolError("CONFLICT", "The destination already exists.")
     if policy == "overwrite":
         ensure_regular(path, directory_ok=True)
+        if preserve_overwrite: return path
         if path.is_dir(): shutil.rmtree(path)
         else: path.unlink()
         return path
@@ -169,6 +206,130 @@ def safe_copy(source: pathlib.Path, destination: pathlib.Path):
         shutil.copytree(source, destination)
     else:
         shutil.copy2(source, destination)
+
+
+def content_digest(path: pathlib.Path) -> str:
+    """Digest regular content and relative names using a host-reproducible format."""
+    digest = hashlib.sha256()
+    if path.is_file():
+        digest.update(b"agent-sandbox-file-v1\0")
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    digest.update(b"agent-sandbox-tree-v1\0")
+    for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix().encode("utf-8", "surrogateescape")):
+        relative = child.relative_to(path).as_posix().encode("utf-8", "surrogateescape")
+        if child.is_dir():
+            digest.update(b"D\0" + relative + b"\0")
+        elif child.is_file():
+            digest.update(b"F\0" + relative + b"\0" + str(child.stat().st_size).encode("ascii") + b"\0")
+            with child.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+        else:
+            raise ProtocolError("UNSUPPORTED_TYPE", "Only regular files and directories can be staged.")
+    return digest.hexdigest()
+
+
+def write_transaction(path: pathlib.Path, value: dict) -> None:
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(value, stream, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def remove_tree_item(path: pathlib.Path) -> None:
+    if path.is_dir() and not path.is_symlink(): shutil.rmtree(path)
+    elif path.exists() or path.is_symlink(): path.unlink()
+
+
+def finish_replacement(transaction: pathlib.Path, metadata: dict) -> None:
+    new_item = transaction / "new"
+    backup = transaction / "backup"
+    destination = resolve("work", components(metadata["destination"]), allow_missing_leaf=True)
+    phase = metadata.get("phase")
+    metadata_path = transaction / "transaction.json"
+    if phase == "preparing":
+        if metadata.get("copy"):
+            shutil.rmtree(transaction, ignore_errors=True)
+            return
+        if new_item.exists() or new_item.is_symlink():
+            metadata["phase"] = "prepared"; write_transaction(metadata_path, metadata)
+            phase = "prepared"
+        else:
+            shutil.rmtree(transaction, ignore_errors=True)
+            return
+    if phase == "prepared":
+        if destination.exists() or destination.is_symlink(): os.replace(destination, backup)
+        metadata["phase"] = "backedUp"; write_transaction(metadata_path, metadata)
+        phase = "backedUp"
+    if phase == "backedUp":
+        if new_item.exists() or new_item.is_symlink():
+            os.replace(new_item, destination)
+            metadata["phase"] = "committed"; write_transaction(metadata_path, metadata)
+            phase = "committed"
+        elif destination.exists() or destination.is_symlink():
+            metadata["phase"] = "committed"; write_transaction(metadata_path, metadata)
+            phase = "committed"
+        elif backup.exists():
+            os.replace(backup, destination)
+            phase = "rolledBack"
+    if phase == "committed" and not destination.exists() and backup.exists():
+        os.replace(backup, destination)
+        phase = "rolledBack"
+    if phase in {"committed", "rolledBack"}:
+        remove_tree_item(backup)
+        shutil.rmtree(transaction, ignore_errors=True)
+
+
+def recover_replacements() -> None:
+    ensure_control_directory(CONTROL)
+    ensure_control_directory(STAGING)
+    ensure_control_directory(REPLACEMENTS)
+    for transaction in REPLACEMENTS.iterdir():
+        if not transaction.is_dir() or transaction.is_symlink():
+            raise ProtocolError("CONTROL_PATH", "A replacement transaction path is invalid.")
+        metadata_path = transaction / "transaction.json"
+        if not metadata_path.is_file():
+            if not (transaction / "new").exists() and not (transaction / "backup").exists():
+                shutil.rmtree(transaction, ignore_errors=True)
+                continue
+            raise ProtocolError("CONTROL_PATH", "A replacement transaction is missing metadata.")
+        try: metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error: raise ProtocolError("CONTROL_PATH", "Replacement metadata is invalid.") from error
+        finish_replacement(transaction, metadata)
+
+
+def atomic_replace(source: pathlib.Path, destination: pathlib.Path, copy_source: bool) -> None:
+    ensure_control_directory(CONTROL)
+    ensure_control_directory(STAGING)
+    ensure_control_directory(REPLACEMENTS)
+    transaction = REPLACEMENTS / uuid.uuid4().hex
+    transaction.mkdir()
+    metadata = {
+        "source": list(source.relative_to(WORK_ROOT).parts),
+        "destination": list(destination.relative_to(WORK_ROOT).parts),
+        "phase": "preparing",
+        "copy": copy_source,
+    }
+    metadata_path = transaction / "transaction.json"
+    write_transaction(metadata_path, metadata)
+    new_item = transaction / "new"
+    try:
+        if copy_source: safe_copy(source, new_item)
+        else: os.replace(source, new_item)
+        metadata["phase"] = "prepared"; write_transaction(metadata_path, metadata)
+        finish_replacement(transaction, metadata)
+    except Exception:
+        backup = transaction / "backup"
+        if not source.exists() and new_item.exists(): os.replace(new_item, source)
+        if not destination.exists() and backup.exists(): os.replace(backup, destination)
+        shutil.rmtree(transaction, ignore_errors=True)
+        raise
 
 
 def validate_windows_tree(path: pathlib.Path) -> None:
@@ -219,6 +380,30 @@ def handle(request: dict) -> dict:
         ensure_regular(path, directory_ok=True)
         if operation == "download" and path.is_dir(): validate_windows_tree(path)
         response["entries"] = [entry(path)]
+    elif operation == "stageDownload":
+        ensure_regular(path, directory_ok=True)
+        expectation(path, request.get("expected"))
+        if path.is_dir(): validate_windows_tree(path)
+        destination_parts = components(request.get("destinationPath"))
+        if (len(destination_parts) != 5 or destination_parts[:3] != [CONTROL.name, "staging", "downloads"] or
+                len(destination_parts[3]) != 32 or any(char not in "0123456789abcdef" for char in destination_parts[3])):
+            raise ProtocolError("INVALID_STAGE", "Download staging must use an exact generated control path.")
+        ensure_control_directory(CONTROL)
+        ensure_control_directory(STAGING)
+        ensure_control_directory(STAGING / "downloads")
+        stage_root = STAGING / "downloads" / destination_parts[3]
+        if stage_root.exists() or stage_root.is_symlink():
+            raise ProtocolError("CONFLICT", "The download staging job already exists.")
+        stage_root.mkdir(parents=True)
+        destination = stage_root / destination_parts[4]
+        try:
+            safe_copy(path, destination)
+            response["relativePath"] = destination_parts
+            response["entries"] = [entry(destination)]
+            response["content"] = content_digest(destination)
+        except Exception:
+            shutil.rmtree(stage_root, ignore_errors=True)
+            raise
     elif operation == "readText":
         ensure_regular(path)
         if path.stat().st_size > MAX_TEXT: raise ProtocolError("TEXT_TOO_LARGE", "Text editing is limited to 5 MiB.")
@@ -243,13 +428,17 @@ def handle(request: dict) -> dict:
         ensure_regular(path, directory_ok=True); expectation(path, request.get("expected"))
         destination_parts = components(request.get("destinationPath"))
         destination = resolve(root_id, destination_parts, allow_missing_leaf=True)
-        destination = conflict_target(destination, request.get("conflict", "fail"))
-        if operation == "copy": safe_copy(path, destination)
+        policy = request.get("conflict", "fail")
+        destination = conflict_target(destination, policy, preserve_overwrite=True)
+        if policy == "overwrite" and (destination.exists() or destination.is_symlink()):
+            atomic_replace(path, destination, copy_source=operation == "copy")
+        elif operation == "copy": safe_copy(path, destination)
         else: os.replace(path, destination)
         response["relativePath"] = destination_parts; response["entries"] = [entry(destination)]
     elif operation == "trash":
         ensure_regular(path, directory_ok=True); expectation(path, request.get("expected"))
-        TRASH.mkdir(parents=True, exist_ok=True)
+        ensure_control_directory(CONTROL)
+        ensure_control_directory(TRASH)
         trash_id = uuid.uuid4().hex
         destination = TRASH / trash_id
         os.replace(path, destination)
@@ -330,12 +519,12 @@ def validate_archive(members):
         if tar_item is not None and not (tar_item.isfile() or tar_item.isdir()): raise ProtocolError("ARCHIVE_TYPE", "Links and special archive entries are not allowed.")
 
 
-def cleanup_staging(force: bool = False):
+def cleanup_staging():
     if not STAGING.exists(): return
     cutoff = time.time() - 24 * 60 * 60
     for item in STAGING.iterdir():
         try:
-            if force or item.lstat().st_mtime < cutoff:
+            if item.lstat().st_mtime < cutoff:
                 if item.is_dir(): shutil.rmtree(item)
                 else: item.unlink()
         except OSError: pass
@@ -363,10 +552,12 @@ def read_request():
 def main() -> int:
     request = {}
     try:
-        CONTROL.mkdir(parents=True, exist_ok=True)
-        request = read_request()
-        cleanup_staging(force=request.get("op") == "list" and request.get("content") == "reconcile")
-        response = handle(request)
+        ensure_control_directory(CONTROL)
+        with (CONTROL / "helper.lock").open("a+b") as lock, exclusive_file_lock(lock):
+            request = read_request()
+            recover_replacements()
+            cleanup_staging()
+            response = handle(request)
     except ProtocolError as error:
         response = {"v": VERSION, "id": request.get("id"), "ok": False, "rootId": request.get("rootId", "work"),
                     "relativePath": request.get("relativePath", []), "entries": [], "revision": None, "nextCursor": None,

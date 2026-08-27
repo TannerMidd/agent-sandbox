@@ -3,7 +3,7 @@
     <OutputName>AgentSandbox-x64</OutputName>
     <OutputType>Package</OutputType>
     <Platform>x64</Platform>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.5</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.6</PackageVersion>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
     <DefineConstants>PublishDir=$(PublishDir);PackageVersion=$(PackageVersion)</DefineConstants>
     <SuppressValidation>false</SuppressValidation>

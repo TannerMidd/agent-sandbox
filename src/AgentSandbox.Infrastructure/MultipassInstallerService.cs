@@ -6,12 +6,16 @@ namespace AgentSandbox.Infrastructure;
 
 public sealed class MultipassInstallerService(HttpClient httpClient, string? downloadDirectory = null) : IMultipassInstallerService
 {
-    public MultipassInstallerRelease Release { get; } = new(
+    // This authorization data is compiled into both the desktop app and elevated helper.
+    // The helper never trusts caller-selected installer identity values.
+    public static MultipassInstallerRelease PinnedRelease { get; } = new(
         new Version(1, 16, 3),
         new Uri("https://github.com/canonical/multipass/releases/download/v1.16.3/multipass-1.16.3+win-win64.msi"),
         "F5BFF63D13FB1377A72B8DD6D277BBDD3369B1F278F4C85D2C8427A2E7D38D39",
         "Canonical",
         "multipass-1.16.3+win-win64.msi");
+
+    public MultipassInstallerRelease Release => PinnedRelease;
 
     public async Task<string> DownloadAsync(IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
