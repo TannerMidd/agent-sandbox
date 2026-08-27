@@ -19,7 +19,17 @@ public sealed class InfrastructureTests
         {
             var path = Path.Combine(directory, "settings.json");
             var store = new JsonSettingsStore(path);
-            var expected = new AgentSandboxSettings { InstanceName = "agent-sandbox", Theme = "Dark", SetupState = SetupState.ResourceConfiguration };
+            var expected = new AgentSandboxSettings
+            {
+                InstanceName = "agent-sandbox-two",
+                Theme = "Dark",
+                SetupState = SetupState.Ready,
+                Sandboxes =
+                [
+                    new SandboxConfiguration("agent-sandbox-one", new ResourceProfile(2, 4, 30), []),
+                    new SandboxConfiguration("agent-sandbox-two", new ResourceProfile(4, 8, 50), ["codex"])
+                ]
+            };
             await store.SaveAsync(expected);
             var actual = await store.LoadAsync();
             Assert.Equal(expected.InstanceName, actual.InstanceName);
@@ -27,6 +37,7 @@ public sealed class InfrastructureTests
             Assert.Equal(expected.SetupState, actual.SetupState);
             Assert.Equal(expected.Resources, actual.Resources);
             Assert.Equal(expected.SelectedPresetIds, actual.SelectedPresetIds);
+            Assert.Equal(expected.Sandboxes, actual.Sandboxes);
             Assert.False(File.Exists(path + ".tmp"));
         }
         finally { Directory.Delete(directory, recursive: true); }

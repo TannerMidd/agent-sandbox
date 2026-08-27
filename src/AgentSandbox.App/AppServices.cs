@@ -38,6 +38,11 @@ public sealed class AppServices : IDisposable
         new ProcessRunner(), new MultipassLocator(), name,
         Path.Combine(AppContext.BaseDirectory, "guest", "guest_helper.py")));
 
+    public void RemoveGuestFiles(string instanceName)
+    {
+        if (guestFiles.TryRemove(instanceName, out var service) && service is IDisposable disposable) disposable.Dispose();
+    }
+
     public void Dispose()
     {
         foreach (var service in guestFiles.Values)

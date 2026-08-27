@@ -33,4 +33,4 @@ Guest file requests use path component arrays. The guest helper rejects separato
 
 The setup coordinator persists a state after each meaningful step. On relaunch it re-inspects the host, then selects the next safe state. Provisioning creates Ubuntu 24.04, waits for cloud-init, runs health checks, stops the VM, creates `clean`, and starts it again before installing selected presets.
 
-The app manages one configured instance. Fresh installs use `agent-sandbox`; import is allowed only for the exact existing `agent-dev` name and never renames or migrates it.
+The app stores the VMs it creates and manages only those instances. Users choose a unique Multipass name for each VM and can switch the active target; import is allowed only for the exact existing `agent-dev` name and never renames or migrates it.

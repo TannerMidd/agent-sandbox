@@ -51,6 +51,10 @@
                     <TextBlock Text="Manage your isolated agent development environment" Opacity="0.58" Margin="0,3,0,0" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <ComboBox x:Name="SandboxPicker" Header="Active VM" MinWidth="190"
+                              ItemsSource="{x:Bind ViewModel.Sandboxes}" DisplayMemberPath="InstanceName"
+                              SelectionChanged="SandboxPicker_SelectionChanged" />
+                    <Button Content="New VM" Click="CreateSandbox_Click" />
                     <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
                     <Button Command="{x:Bind ViewModel.RefreshSandboxCommand}" ToolTipService.ToolTip="Refresh status">
                         <FontIcon Glyph="&#xE72C;" />
@@ -110,6 +114,7 @@
                                             <Button Content="Stop" Command="{x:Bind ViewModel.StopCommand}" IsEnabled="{x:Bind ViewModel.CanOperateSandbox, Mode=OneWay}" />
                                             <Button Content="Embedded terminal" Click="EmbeddedTerminal_Click" IsEnabled="{x:Bind ViewModel.CanOperateSandbox, Mode=OneWay}" />
                                             <Button Content="Windows Terminal" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.OpenTerminalCommand}" IsEnabled="{x:Bind ViewModel.CanOperateSandbox, Mode=OneWay}" />
+                                            <Button Content="Delete VM…" Click="DeleteSandbox_Click" IsEnabled="{x:Bind ViewModel.CanManageSandbox, Mode=OneWay}" />
                                         </StackPanel>
                                     </Grid>
                                     <InfoBar IsOpen="True" IsClosable="False"
@@ -186,7 +191,7 @@
                     <StackPanel Margin="32,8,32,32" Spacing="16">
                         <Border Style="{StaticResource CardStyle}"><Grid><StackPanel><TextBlock Text="Snapshots" Style="{StaticResource SubtitleTextBlockStyle}" /><TextBlock Text="Restore points are exact-target operations. Destructive restore always requires confirmation." Opacity="0.6" Margin="0,4,0,0" /></StackPanel><Button HorizontalAlignment="Right" Content="Create snapshot" Command="{x:Bind ViewModel.CreateSnapshotCommand}" /></Grid></Border>
                         <ListView ItemsSource="{x:Bind ViewModel.Snapshots}"><ListView.ItemTemplate><DataTemplate><Border Style="{StaticResource CardStyle}" Margin="0,0,0,8"><Grid><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" /><TextBlock Text="{Binding InstanceName}" Opacity="0.5" /></StackPanel><Button HorizontalAlignment="Right" Content="Restore…" Click="RestoreSnapshot_Click" /></Grid></Border></DataTemplate></ListView.ItemTemplate></ListView>
-                        <Border Style="{StaticResource CardStyle}" BorderBrush="{ThemeResource DangerBorderBrush}"><StackPanel Spacing="8"><TextBlock Text="Recovery actions" Style="{StaticResource SubtitleTextBlockStyle}" /><TextBlock Text="Rebuild never removes the workspace without a separately typed, exact-target confirmation. Uninstalling the app leaves the VM and workspace intact." TextWrapping="Wrap" Opacity="0.65" /><StackPanel Orientation="Horizontal" Spacing="8"><Button Content="Review trash" Click="ReviewTrash_Click"/><Button Content="Rebuild sandbox…" Click="Rebuild_Click"/></StackPanel></StackPanel></Border>
+                        <Border Style="{StaticResource CardStyle}" BorderBrush="{ThemeResource DangerBorderBrush}"><StackPanel Spacing="8"><TextBlock Text="Recovery actions" Style="{StaticResource SubtitleTextBlockStyle}" /><TextBlock Text="Rebuild never removes the workspace without a separately typed, exact-target confirmation. Uninstalling the app leaves the VM and workspace intact." TextWrapping="Wrap" Opacity="0.65" /><StackPanel Orientation="Horizontal" Spacing="8"><Button Content="Review trash" Click="ReviewTrash_Click"/><Button Content="Rebuild sandbox…" Click="Rebuild_Click" IsEnabled="{x:Bind ViewModel.CanOperateSandbox, Mode=OneWay}"/></StackPanel></StackPanel></Border>
                     </StackPanel>
                 </ScrollViewer>
 

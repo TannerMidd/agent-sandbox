@@ -72,7 +72,194 @@ public sealed class SetupCoordinatorTests
 
         Assert.Equal(SetupState.Ready, recovered.SetupState);
         Assert.Equal(sandbox.Resources, recovered.Resources);
+        Assert.Equal(sandbox.Resources, Assert.Single(recovered.Sandboxes).Resources);
     }
+
+    [Fact]
+    public async Task ReadyV1SettingsAreMigratedToManagedSandboxes()
+    {
+        var initial = new AgentSandboxSettings { InstanceName = "agent-sandbox-old", SetupState = SetupState.Ready };
+        var coordinator = new SetupCoordinator(new MemorySettings(initial), new FakePrerequisites(), new FakeMultipass(), new FakePresets());
+
+        var migrated = await coordinator.ResumeSetupAsync();
+
+        Assert.Equal("agent-sandbox-old", Assert.Single(migrated.Sandboxes).InstanceName);
+    }
+
+    [Theory]
+    [InlineData(SetupState.Provisioning)]
+    [InlineData(SetupState.InstallingPresets)]
+    public async Task InterruptedV1SettingsWithAnExistingVmRequireReview(SetupState interruptedState)
+    {
+        var resources = new ResourceProfile(2, 4, 30);
+        var sandbox = new SandboxInfo("agent-sandbox-old", SandboxState.Running, resources, "10.0.0.2", "24.04", DateTimeOffset.UtcNow);
+        var initial = new AgentSandboxSettings { InstanceName = sandbox.InstanceName, SetupState = interruptedState, Resources = resources, SelectedPresetIds = ["codex"] };
+        var coordinator = new SetupCoordinator(new MemorySettings(initial), new FakePrerequisites(), new FakeMultipass(sandbox), new FakePresets());
+
+        var migrated = await coordinator.ResumeSetupAsync();
+
+        Assert.Equal(SetupState.NeedsReview, migrated.SetupState);
+        Assert.Empty(Assert.Single(migrated.Sandboxes).SelectedPresetIds);
+    }
+
+    [Theory]
+    [InlineData(SetupState.Provisioning)]
+    [InlineData(SetupState.InstallingPresets)]
+    public async Task InterruptedV1SettingsWithoutAVmReturnToConfiguration(SetupState interruptedState)
+    {
+        var initial = new AgentSandboxSettings { InstanceName = "agent-sandbox-old", SetupState = interruptedState };
+        var coordinator = new SetupCoordinator(new MemorySettings(initial), new FakePrerequisites(), new FakeMultipass(), new FakePresets());
+
+        var migrated = await coordinator.ResumeSetupAsync();
+
+        Assert.Equal(SetupState.ResourceConfiguration, migrated.SetupState);
+        Assert.Empty(migrated.Sandboxes);
+    }
+
+    [Fact]
+    public async Task InterruptedPresetInstallWithARegistrationRequiresReview()
+    {
+        var resources = new ResourceProfile(2, 4, 30);
+        var initial = new AgentSandboxSettings
+        {
+            InstanceName = "agent-sandbox-preset",
+            SetupState = SetupState.InstallingPresets,
+            Resources = resources,
+            Sandboxes = [new SandboxConfiguration("agent-sandbox-preset", resources, [])]
+        };
+        var coordinator = new SetupCoordinator(new MemorySettings(initial), new FakePrerequisites(), new FakeMultipass(), new FakePresets());
+
+        var recovered = await coordinator.ResumeSetupAsync();
+
+        Assert.Equal(SetupState.NeedsReview, recovered.SetupState);
+    }
+
+    [Fact]
+    public void AggregateResourcesPreserveWindowsCapacity()
+    {
+        var existing = new[] { new SandboxConfiguration("agent-sandbox-one", new ResourceProfile(4, 8, 30), []) };
+
+        var errors = SetupCoordinator.ValidateAggregateResources(existing, new ResourceProfile(4, 8, 30), 8, 20L << 30);
+
+        Assert.Equal(2, errors.Count);
+    }
+
+    [Fact]
+    public async Task PartialProvisioningIsManagedButRequiresReview()
+    {
+        var store = new MemorySettings();
+        var multipass = new FakeMultipass { ProvisionResult = Result(OperationState.CleanupPending, "Partial") };
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), multipass, new FakePresets(), freeDiskBytes: _ => 100L << 30);
+
+        var result = await coordinator.ProvisionAsync("agent-sandbox-partial", new ResourceProfile(2, 4, 30), []);
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(OperationState.CleanupPending, result.State);
+        Assert.Equal(SetupState.NeedsReview, settings.SetupState);
+        Assert.Equal("agent-sandbox-partial", Assert.Single(settings.Sandboxes).InstanceName);
+    }
+
+    [Fact]
+    public async Task FailedPresetIsNotMarkedInstalled()
+    {
+        var store = new MemorySettings();
+        var presets = new FakePresets(Result(OperationState.Failed, "Preset failed"));
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), new FakeMultipass(), presets, freeDiskBytes: _ => 100L << 30);
+
+        var result = await coordinator.ProvisionAsync("agent-sandbox-preset", new ResourceProfile(2, 4, 30), ["codex"]);
+        var settings = await store.LoadAsync();
+
+        Assert.Equal(OperationState.Failed, result.State);
+        Assert.Equal(SetupState.NeedsReview, settings.SetupState);
+        Assert.Empty(Assert.Single(settings.Sandboxes).SelectedPresetIds);
+    }
+
+    [Fact]
+    public async Task ManagedSandboxesCanBeSelectedAndDeletedIndependently()
+    {
+        var resources = new ResourceProfile(2, 4, 30);
+        var first = new SandboxInfo("agent-sandbox-one", SandboxState.Running, resources, "10.0.0.2", "24.04", DateTimeOffset.UtcNow);
+        var second = first with { InstanceName = "agent-sandbox-two", IPv4Address = "10.0.0.3" };
+        var profiles = new[]
+        {
+            new SandboxConfiguration(first.InstanceName, resources, []),
+            new SandboxConfiguration(second.InstanceName, resources, ["codex"])
+        };
+        var store = new MemorySettings(new AgentSandboxSettings
+        {
+            InstanceName = first.InstanceName,
+            SetupState = SetupState.Ready,
+            Resources = resources,
+            Sandboxes = profiles
+        });
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), new FakeMultipass(first, second), new FakePresets());
+
+        var selected = await coordinator.SelectSandboxAsync(second.InstanceName);
+        await coordinator.DeleteSandboxAsync(second.InstanceName);
+        var remaining = await store.LoadAsync();
+
+        Assert.Equal(second.InstanceName, selected.InstanceName);
+        Assert.Equal(new[] { "codex" }, selected.SelectedPresetIds);
+        Assert.Equal(first.InstanceName, remaining.InstanceName);
+        Assert.Equal(first.InstanceName, Assert.Single(remaining.Sandboxes).InstanceName);
+    }
+
+    [Fact]
+    public async Task ReviewTargetMustBeResolvedBeforeManagingAnotherVm()
+    {
+        var resources = new ResourceProfile(2, 4, 30);
+        var first = new SandboxInfo("agent-sandbox-one", SandboxState.Running, resources, "10.0.0.2", "24.04", DateTimeOffset.UtcNow);
+        var second = first with { InstanceName = "agent-sandbox-two" };
+        var store = new MemorySettings(new AgentSandboxSettings
+        {
+            InstanceName = second.InstanceName,
+            SetupState = SetupState.NeedsReview,
+            Resources = resources,
+            Sandboxes =
+            [
+                new SandboxConfiguration(first.InstanceName, resources, []),
+                new SandboxConfiguration(second.InstanceName, resources, [])
+            ]
+        });
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), new FakeMultipass(first, second), new FakePresets());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.SelectSandboxAsync(first.InstanceName));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.DeleteSandboxAsync(first.InstanceName));
+
+        var unchanged = await store.LoadAsync();
+        Assert.Equal(SetupState.NeedsReview, unchanged.SetupState);
+        Assert.Equal(second.InstanceName, unchanged.InstanceName);
+    }
+
+    [Fact]
+    public async Task MissingManagedSandboxCanBeSelectedAndRemoved()
+    {
+        var resources = new ResourceProfile(2, 4, 30);
+        var existing = new SandboxInfo("agent-sandbox-one", SandboxState.Running, resources, "10.0.0.2", "24.04", DateTimeOffset.UtcNow);
+        var store = new MemorySettings(new AgentSandboxSettings
+        {
+            InstanceName = existing.InstanceName,
+            SetupState = SetupState.Ready,
+            Resources = resources,
+            Sandboxes =
+            [
+                new SandboxConfiguration(existing.InstanceName, resources, []),
+                new SandboxConfiguration("agent-sandbox-missing", resources, [])
+            ]
+        });
+        var coordinator = new SetupCoordinator(store, new FakePrerequisites(), new FakeMultipass(existing), new FakePresets());
+
+        var selected = await coordinator.SelectSandboxAsync("agent-sandbox-missing");
+        await coordinator.DeleteSandboxAsync("agent-sandbox-missing");
+        var remaining = await store.LoadAsync();
+
+        Assert.Equal("agent-sandbox-missing", selected.InstanceName);
+        Assert.Equal(existing.InstanceName, remaining.InstanceName);
+        Assert.Equal(existing.InstanceName, Assert.Single(remaining.Sandboxes).InstanceName);
+    }
+
+    private static OperationProgress Result(OperationState state, string phase) =>
+        new(Guid.NewGuid(), "Test", state, phase, 100, null, null, state == OperationState.Succeeded ? null : "TEST", null, DateTimeOffset.UtcNow);
 
     private static HostReadiness ReadyHost() => new(true, true, true, true, true, false, true, true, "multipass.exe", "1", "hyperv", null, 32L << 30, 20L << 30, []);
 
@@ -87,23 +274,35 @@ public sealed class SetupCoordinatorTests
         public Task<HostReadiness> InspectAsync(CancellationToken cancellationToken = default) => Task.FromResult(readiness ?? ReadyHost());
         public Task<SetupHelperResponse> ExecuteElevatedAsync(SetupHelperRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
-    private sealed class FakePresets : IPresetService
+    private sealed class FakePresets(OperationProgress? installResult = null) : IPresetService
     {
         public Task<IReadOnlyList<AgentPresetManifest>> GetAvailableAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AgentPresetManifest>>([]);
-        public Task<OperationProgress> InstallAsync(string instanceName, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<OperationProgress> InstallAsync(string instanceName, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(installResult ?? Result(OperationState.Succeeded, "Installed"));
     }
-    private sealed class FakeMultipass(SandboxInfo? sandbox = null) : IMultipassService
+    private sealed class FakeMultipass(params SandboxInfo[] initial) : IMultipassService
     {
+        private readonly Dictionary<string, SandboxInfo> sandboxes = initial.ToDictionary(item => item.InstanceName, StringComparer.Ordinal);
+        public OperationProgress ProvisionResult { get; init; } = Result(OperationState.Succeeded, "Ready");
         public Task<SandboxInfo?> GetSandboxAsync(string instanceName, CancellationToken cancellationToken = default) =>
-            Task.FromResult(string.Equals(instanceName, sandbox?.InstanceName, StringComparison.Ordinal) ? sandbox : null);
+            Task.FromResult(sandboxes.GetValueOrDefault(instanceName));
         public Task<IReadOnlyList<SandboxInfo>> ListSandboxesAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<SandboxInfo>>(sandbox is null ? [] : [sandbox]);
+            Task.FromResult<IReadOnlyList<SandboxInfo>>(sandboxes.Values.ToArray());
         public Task<OperationProgress> StartAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> StopAsync(string instanceName, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<OperationProgress> ProvisionAsync(ProvisionRequest request, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            if (ProvisionResult.State is OperationState.Succeeded or OperationState.CleanupPending)
+                sandboxes.Add(request.InstanceName, new SandboxInfo(request.InstanceName, SandboxState.Running, request.Resources, "10.0.0.4", "24.04", DateTimeOffset.UtcNow));
+            return Task.FromResult(ProvisionResult);
+        }
         public Task<IReadOnlyList<SnapshotInfo>> ListSnapshotsAsync(string instanceName, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SnapshotInfo>>([]);
         public Task<OperationProgress> CreateSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<OperationProgress> RestoreSnapshotAsync(string instanceName, string snapshotName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<OperationProgress> DeleteAsync(string instanceName, bool purge, CancellationToken cancellationToken = default)
+        {
+            if (!sandboxes.Remove(instanceName)) throw new InvalidOperationException("Exact fake sandbox not found.");
+            return Task.FromResult(new OperationProgress(Guid.NewGuid(), "Delete", OperationState.Succeeded, "Deleted", 100, null, null, null, null, DateTimeOffset.UtcNow));
+        }
     }
 }

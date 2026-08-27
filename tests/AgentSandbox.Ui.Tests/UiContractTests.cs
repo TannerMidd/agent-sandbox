@@ -36,6 +36,9 @@ public sealed class UiContractTests
             Assert.Contains(label, text, StringComparison.Ordinal);
         Assert.Contains("Test connection", text, StringComparison.Ordinal);
         Assert.Contains("GuestConnectionStatus", text, StringComparison.Ordinal);
+        Assert.Contains("Active VM", text, StringComparison.Ordinal);
+        Assert.Contains("New VM", text, StringComparison.Ordinal);
+        Assert.Contains("Delete VM…", text, StringComparison.Ordinal);
         Assert.Contains("AdaptiveTrigger MinWindowWidth=\"900\"", text, StringComparison.Ordinal);
     }
 

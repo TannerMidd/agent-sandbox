@@ -18,6 +18,7 @@ namespace AgentSandbox.App;
 public sealed partial class MainPage : Page
 {
     private bool settingsLoaded;
+    private bool updatingSandboxPicker;
 
     public MainPageViewModel ViewModel { get; } = new();
 
@@ -30,6 +31,7 @@ public sealed partial class MainPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.InitializeCommand.ExecuteAsync(null);
+        SelectCurrentSandboxInPicker();
         LoadSettingsControls();
         await ShowAvailableReleaseAsync(force: false);
     }
@@ -89,6 +91,7 @@ public sealed partial class MainPage : Page
                 case SetupState.NeedsReview:
                     var legacy = await ViewModel.InspectLegacyImportAsync();
                     if (legacy is not null &&
+                        ViewModel.Sandboxes.Count == 0 &&
                         !ViewModel.CurrentSettings.ImportedLegacyInstance &&
                         !string.Equals(ViewModel.CurrentSettings.InstanceName, legacy.InstanceName, StringComparison.Ordinal))
                         await ShowLegacyImportAsync(legacy);
@@ -142,10 +145,10 @@ public sealed partial class MainPage : Page
         await ShowResourceSetupAsync();
     }
 
-    private async Task ShowResourceSetupAsync()
+    private async Task ShowResourceSetupAsync(string? requestedName = null)
     {
         var host = await ViewModel.InspectHostAsync();
-        var legacy = await ViewModel.InspectLegacyImportAsync();
+        var legacy = requestedName is null ? await ViewModel.InspectLegacyImportAsync() : null;
         if (!host.CanProvision)
         {
             if (legacy is not null) await ShowLegacyImportAsync(legacy);
@@ -155,6 +158,12 @@ public sealed partial class MainPage : Page
 
         var storageRoot = Path.GetPathRoot(ViewModel.CurrentSettings.StoragePath ?? AppContext.BaseDirectory)!;
         var recommendation = ResourceProfile.Recommend(Environment.ProcessorCount, host.AvailableMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
+        var name = new TextBox
+        {
+            Header = "VM name",
+            Text = requestedName ?? ViewModel.CurrentSettings.InstanceName,
+            PlaceholderText = "agent-sandbox-project"
+        };
         var cpu = Number("Virtual CPUs", recommendation.CpuCount, 2, 8);
         var memory = Number("Memory (GiB)", recommendation.MemoryGiB, 4, 16);
         var disk = Number("Disk (GiB)", recommendation.DiskGiB, 30, 2048);
@@ -168,6 +177,7 @@ public sealed partial class MainPage : Page
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = "Development boundary", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "The VM isolates development tools from normal Windows work, but it is not a hardened hostile-code boundary. Agent credentials are entered only inside the guest terminal; host credential stores are never copied.", TextWrapping = TextWrapping.Wrap, Opacity = 0.75 });
+        panel.Children.Add(name);
         var resources = new Grid { ColumnSpacing = 10 };
         resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition());
         resources.Children.Add(cpu); Grid.SetColumn(memory, 1); resources.Children.Add(memory); Grid.SetColumn(disk, 2); resources.Children.Add(disk);
@@ -175,22 +185,23 @@ public sealed partial class MainPage : Page
         panel.Children.Add(new TextBlock { Text = "Optional pinned agent presets", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(presetPanel);
 
-        var dialog = Dialog("Create your agent sandbox", panel, "Provision Ubuntu 24.04", "Cancel");
+        var dialog = Dialog(requestedName is null ? "Create your agent sandbox" : "Create another sandbox", panel, "Provision Ubuntu 24.04", "Cancel");
         if (legacy is not null)
         {
             dialog.SecondaryButtonText = "Import agent-dev";
             panel.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Informational, Title = "Existing agent-dev found", Message = $"Import preserves its name, data, storage, and {legacy.SnapshotNames.Count} snapshot(s)." });
         }
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Secondary && legacy is not null) { await ViewModel.ImportLegacyAsync(legacy); return; }
+        if (result == ContentDialogResult.Secondary && legacy is not null) { await ViewModel.ImportLegacyAsync(legacy); SelectCurrentSandboxInPicker(); return; }
         if (result != ContentDialogResult.Primary) return;
         var profile = new ResourceProfile((int)cpu.Value, (int)memory.Value, (int)disk.Value);
         var errors = profile.Validate(Environment.ProcessorCount, host.TotalMemoryBytes, new DriveInfo(storageRoot).AvailableFreeSpace);
         if (errors.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
         var selected = presetChecks.Where(item => item.IsChecked == true).Select(item => (string)item.Tag).ToArray();
         var progress = new Progress<OperationProgress>(item => ViewModel.OperationLabel = item.Percent is null ? item.Phase : $"{item.Phase} • {item.Percent}%");
-        await ViewModel.ProvisionAsync(profile, selected, progress);
-        await MessageAsync("Agent Sandbox is ready", "Ubuntu 24.04 passed its health checks, the clean snapshot was created, and your selected presets were installed.");
+        await ViewModel.ProvisionAsync(name.Text.Trim(), profile, selected, progress);
+        SelectCurrentSandboxInPicker();
+        await MessageAsync("Agent Sandbox is ready", $"{name.Text.Trim()} passed its health checks, created the clean snapshot, and installed your selected presets.");
     }
 
     private async Task ShowLegacyImportAsync(LegacyImportCandidate legacy)
@@ -210,6 +221,7 @@ public sealed partial class MainPage : Page
         });
         if (await Dialog("Use your existing sandbox?", panel, "Import agent-dev", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
         await ViewModel.ImportLegacyAsync(legacy);
+        SelectCurrentSandboxInPicker();
         await MessageAsync("Existing sandbox connected", $"Agent Sandbox now manages {legacy.InstanceName}. Your VM and its data were not changed.");
     }
 
@@ -423,10 +435,37 @@ public sealed partial class MainPage : Page
         var typed = new TextBox { Header = $"Type {exact} to delete and rebuild", PlaceholderText = exact };
         if (await Dialog("Rebuild sandbox?", typed, "Delete and rebuild", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
         if (!string.Equals(typed.Text, exact, StringComparison.Ordinal)) { await MessageAsync("Confirmation did not match", "No changes were made."); return; }
+        await TryAsync(async () => { await ViewModel.RebuildSandboxAsync(exact); SelectCurrentSandboxInPicker(); });
+    }
+
+    private async void DeleteSandbox_Click(object sender, RoutedEventArgs e)
+    {
+        var exact = ViewModel.CurrentSettings.InstanceName;
+        var typed = new TextBox { Header = $"Type {exact} to permanently delete", PlaceholderText = exact };
+        if (await Dialog("Delete VM permanently?", typed, "Delete VM", "Cancel").ShowAsync() != ContentDialogResult.Primary) return;
+        if (!string.Equals(typed.Text, exact, StringComparison.Ordinal)) { await MessageAsync("Confirmation did not match", "No changes were made."); return; }
+        await TryAsync(async () => { await ViewModel.DeleteSandboxAsync(exact); SelectCurrentSandboxInPicker(); });
+    }
+
+    private async void CreateSandbox_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.CurrentSettings.IsReady) { await ShowSetupAsync(); return; }
+        var number = 2;
+        string name;
+        do name = $"agent-sandbox-{number++}";
+        while (ViewModel.Sandboxes.Any(item => string.Equals(item.InstanceName, name, StringComparison.Ordinal)));
+        await TryAsync(() => ShowResourceSetupAsync(name));
+    }
+
+    private async void SandboxPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (updatingSandboxPicker || SandboxPicker.SelectedItem is not SandboxConfiguration selected) return;
         await TryAsync(async () =>
         {
-            await App.Services.Multipass.DeleteAsync(exact, purge: true);
-            await ViewModel.ProvisionAsync(ViewModel.CurrentSettings.Resources, ViewModel.CurrentSettings.SelectedPresetIds);
+            await ViewModel.SelectSandboxAsync(selected.InstanceName);
+            SelectCurrentSandboxInPicker();
+            if (FilesPanel.Visibility == Visibility.Visible && ViewModel.CanOperateSandbox)
+                await ViewModel.LoadGuestFilesAsync();
         });
     }
 
@@ -503,6 +542,14 @@ public sealed partial class MainPage : Page
             });
             await Dialog("Embedded guest terminal", panel, null, "Close").ShowAsync();
         });
+    }
+
+    private void SelectCurrentSandboxInPicker()
+    {
+        updatingSandboxPicker = true;
+        SandboxPicker.SelectedItem = ViewModel.Sandboxes.FirstOrDefault(item =>
+            string.Equals(item.InstanceName, ViewModel.CurrentSettings.InstanceName, StringComparison.Ordinal));
+        updatingSandboxPicker = false;
     }
 
     private void LoadSettingsControls()

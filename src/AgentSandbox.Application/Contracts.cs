@@ -38,7 +38,9 @@ public interface ISandboxLifecycleService
     Task<AgentSandboxSettings> ResumeSetupAsync(CancellationToken cancellationToken = default);
     Task<LegacyImportCandidate?> InspectLegacyImportAsync(CancellationToken cancellationToken = default);
     Task<AgentSandboxSettings> ImportLegacyAsync(LegacyImportCandidate candidate, CancellationToken cancellationToken = default);
-    Task<OperationProgress> ProvisionAsync(ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<AgentSandboxSettings> SelectSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
+    Task<OperationProgress> ProvisionAsync(string instanceName, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<OperationProgress> DeleteSandboxAsync(string instanceName, CancellationToken cancellationToken = default);
 }
 
 public interface IGuestFileService

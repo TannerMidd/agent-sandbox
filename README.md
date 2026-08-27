@@ -1,6 +1,6 @@
 # Agent Sandbox
 
-Agent Sandbox is a GUI-first Windows app for creating and managing one isolated Ubuntu development VM for coding agents. It is designed for people who want a repeatable sandbox without writing PowerShell commands.
+Agent Sandbox is a GUI-first Windows app for creating and managing isolated Ubuntu development VMs for coding agents. It is designed for people who want repeatable sandboxes without writing PowerShell commands.
 
 ![Agent Sandbox dark dashboard](docs/assets/agent-sandbox-dashboard.png)
 
@@ -10,7 +10,7 @@ Agent Sandbox is a GUI-first Windows app for creating and managing one isolated 
 
 - Checks Windows 11 Pro/Enterprise, virtualization, Hyper-V, memory, disk, and Multipass.
 - Resumes setup after a reboot and preserves compatible existing Multipass installations.
-- Provisions Ubuntu 24.04 as `agent-sandbox`, with a read-only import preview for the exact legacy name `agent-dev`.
+- Creates and switches between user-named Ubuntu 24.04 VMs, with a read-only import preview for the exact legacy name `agent-dev`.
 - Starts and stops the VM, opens a guest terminal, and creates or restores exact-target snapshots.
 - Provides a dual-pane host/guest file workspace with staged, verified transfers and recoverable guest trash.
 - Supports bidirectional drag/drop, queued cancellation, safe conflict handling, UTF-8 editing, permissions, archives, workspace trash/restore, and opt-in read-only system browsing.
@@ -26,7 +26,7 @@ Agent Sandbox is a GUI-first Windows app for creating and managing one isolated 
 - At least 30 GiB of VM disk space while leaving 10 GiB free
 - At least 4 GiB of VM memory while leaving 6 GiB for Windows
 
-Windows Home, macOS, Linux hosts, multiple sandboxes, persistent host mounts, automatic storage migration, and host credential forwarding are outside the v1 boundary.
+Windows Home, macOS, Linux hosts, persistent host mounts, automatic storage migration, and host credential forwarding are outside the v1 boundary.
 
 ## Quick start for users
 

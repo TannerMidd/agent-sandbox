@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AgentSandbox.Domain;
 
 namespace AgentSandbox.Application;
@@ -7,17 +8,24 @@ public sealed class SetupCoordinator(
     IHostPrerequisiteService prerequisites,
     IMultipassService multipass,
     IPresetService presets,
-    string cloudInitPath = "cloud-init.yaml") : ISandboxLifecycleService
+    string cloudInitPath = "cloud-init.yaml",
+    Func<string, long>? freeDiskBytes = null) : ISandboxLifecycleService
 {
+    private static readonly Regex InstanceNamePattern = new("^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$", RegexOptions.CultureInvariant);
+
     public async Task<AgentSandboxSettings> ResumeSetupAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await settingsStore.LoadAsync(cancellationToken);
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
         if (settings.ImportedLegacyInstance && string.Equals(settings.InstanceName, "agent-dev", StringComparison.Ordinal))
         {
             var imported = await multipass.GetSandboxAsync(settings.InstanceName, cancellationToken);
             if (imported is not null && imported.State != SandboxState.Failed)
             {
-                var recovered = settings with { SetupState = SetupState.Ready, Resources = imported.Resources };
+                var configuration = settings.Sandboxes.Single(item => item.InstanceName == settings.InstanceName) with { Resources = imported.Resources };
+                var recovered = UpdateActive(settings with
+                {
+                    Sandboxes = settings.Sandboxes.Select(item => item.InstanceName == configuration.InstanceName ? configuration : item).ToArray()
+                }, configuration) with { SetupState = SetupState.Ready };
                 if (settings != recovered) await settingsStore.SaveAsync(recovered, cancellationToken);
                 return recovered;
             }
@@ -55,58 +63,139 @@ public sealed class SetupCoordinator(
         if (current.State == SandboxState.Failed)
             throw new InvalidOperationException("The legacy instance must be repaired before import.");
 
-        var settings = (await settingsStore.LoadAsync(cancellationToken)) with
-        {
-            InstanceName = candidate.InstanceName,
-            ImportedLegacyInstance = true,
-            Resources = current.Resources,
-            SetupState = SetupState.Ready
-        };
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
+        if (settings.Sandboxes.Count > 0 && settings.SetupState == SetupState.NeedsReview)
+            throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before importing another VM.");
+        if (settings.Sandboxes.Any(item => item.InstanceName == candidate.InstanceName))
+            throw new InvalidOperationException("The legacy instance is already managed.");
+        var configuration = new SandboxConfiguration(candidate.InstanceName, current.Resources, [], true);
+        settings = UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with { SetupState = SetupState.Ready };
+        await settingsStore.SaveAsync(settings, cancellationToken);
+        return settings;
+    }
+
+    public async Task<AgentSandboxSettings> SelectSandboxAsync(string instanceName, CancellationToken cancellationToken = default)
+    {
+        ValidateInstanceName(instanceName);
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
+        if (settings.SetupState == SetupState.NeedsReview && !string.Equals(settings.InstanceName, instanceName, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before switching VMs.");
+        var configuration = settings.Sandboxes.SingleOrDefault(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Sandbox '{instanceName}' is not managed by Agent Sandbox.");
+        settings = UpdateActive(settings, configuration) with { SetupState = settings.SetupState == SetupState.NeedsReview ? SetupState.NeedsReview : SetupState.Ready };
         await settingsStore.SaveAsync(settings, cancellationToken);
         return settings;
     }
 
     public async Task<OperationProgress> ProvisionAsync(
+        string instanceName,
         ResourceProfile resources,
         IReadOnlyList<string> presetIds,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var settings = await settingsStore.LoadAsync(cancellationToken);
+        ValidateInstanceName(instanceName);
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
+        if (settings.Sandboxes.Count > 0 && settings.SetupState == SetupState.NeedsReview)
+            throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before creating another VM.");
+        if (settings.Sandboxes.Any(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal)))
+            throw new InvalidOperationException($"Sandbox '{instanceName}' is already managed.");
+
         var host = await prerequisites.InspectAsync(cancellationToken);
         var validationErrors = resources.Validate(
             Environment.ProcessorCount,
             host.TotalMemoryBytes,
-            GetFreeDiskBytes(cloudInitPath));
+            freeDiskBytes?.Invoke(cloudInitPath) ?? GetFreeDiskBytes(cloudInitPath)).ToList();
+        validationErrors.AddRange(ValidateAggregateResources(settings.Sandboxes, resources, Environment.ProcessorCount, host.TotalMemoryBytes));
         if (validationErrors.Count > 0)
             throw new InvalidOperationException(string.Join(Environment.NewLine, validationErrors));
 
-        var request = new ProvisionRequest(settings.InstanceName, "24.04", resources, cloudInitPath, "clean");
-        settings = settings with { Resources = resources, SelectedPresetIds = presetIds, SetupState = SetupState.Provisioning };
-        await settingsStore.SaveAsync(settings, cancellationToken);
+        var initialProvision = settings.Sandboxes.Count == 0;
+        var request = new ProvisionRequest(instanceName, "24.04", resources, cloudInitPath, "clean");
+        if (initialProvision)
+        {
+            settings = settings with
+            {
+                InstanceName = instanceName,
+                Resources = resources,
+                SelectedPresetIds = presetIds,
+                SetupState = SetupState.Provisioning
+            };
+            await settingsStore.SaveAsync(settings, cancellationToken);
+        }
 
+        var configuration = new SandboxConfiguration(instanceName, resources, []);
         var provisionResult = await multipass.ProvisionAsync(request, progress, cancellationToken);
         if (provisionResult.State != OperationState.Succeeded)
         {
-            await settingsStore.SaveAsync(settings with { SetupState = SetupState.NeedsReview }, cancellationToken);
+            settings = provisionResult.State == OperationState.CleanupPending
+                ? UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with { SetupState = SetupState.NeedsReview }
+                : settings with { SetupState = initialProvision ? SetupState.NeedsReview : SetupState.Ready };
+            await settingsStore.SaveAsync(settings, cancellationToken);
             return provisionResult;
         }
 
+        settings = UpdateActive(settings with { Sandboxes = [.. settings.Sandboxes, configuration] }, configuration) with
+        {
+            SetupState = presetIds.Count > 0 ? SetupState.InstallingPresets : SetupState.Ready
+        };
+        await settingsStore.SaveAsync(settings, cancellationToken);
         if (presetIds.Count > 0)
         {
-            settings = settings with { SetupState = SetupState.InstallingPresets };
-            await settingsStore.SaveAsync(settings, cancellationToken);
-            var presetResult = await presets.InstallAsync(settings.InstanceName, presetIds, progress, cancellationToken);
+            OperationProgress presetResult;
+            try
+            {
+                presetResult = await presets.InstallAsync(instanceName, presetIds, progress, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                presetResult = new OperationProgress(
+                    Guid.NewGuid(), "Install agent presets",
+                    exception is OperationCanceledException ? OperationState.Canceled : OperationState.Failed,
+                    "Preset installation failed", null, null, null, "PRESET_INSTALL_FAILED", exception.Message, DateTimeOffset.UtcNow);
+            }
             if (presetResult.State != OperationState.Succeeded)
             {
                 await settingsStore.SaveAsync(settings with { SetupState = SetupState.NeedsReview }, cancellationToken);
                 return presetResult;
             }
+            configuration = configuration with { SelectedPresetIds = presetIds.ToArray() };
+            settings = UpdateActive(settings with
+            {
+                Sandboxes = settings.Sandboxes.Select(item => item.InstanceName == instanceName ? configuration : item).ToArray()
+            }, configuration) with { SetupState = SetupState.Ready };
+            await settingsStore.SaveAsync(settings, cancellationToken);
         }
 
-        settings = settings with { SetupState = SetupState.Ready };
+        return provisionResult with { Title = $"{instanceName} is ready", UpdatedAt = DateTimeOffset.UtcNow };
+    }
+
+    public async Task<OperationProgress> DeleteSandboxAsync(string instanceName, CancellationToken cancellationToken = default)
+    {
+        ValidateInstanceName(instanceName);
+        var settings = await NormalizeAsync(await settingsStore.LoadAsync(cancellationToken), cancellationToken);
+        if (!settings.Sandboxes.Any(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal)))
+            throw new InvalidOperationException($"Sandbox '{instanceName}' is not managed by Agent Sandbox.");
+        if (settings.SetupState == SetupState.NeedsReview && !string.Equals(settings.InstanceName, instanceName, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Resolve or delete sandbox '{settings.InstanceName}' before deleting another VM.");
+
+        var result = await multipass.GetSandboxAsync(instanceName, cancellationToken) is null
+            ? new OperationProgress(Guid.NewGuid(), "Remove sandbox", OperationState.Succeeded, "Missing VM registration removed", 100, null, null, null, null, DateTimeOffset.UtcNow)
+            : await multipass.DeleteAsync(instanceName, purge: true, cancellationToken: cancellationToken);
+        var remaining = settings.Sandboxes.Where(item => !string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal)).ToArray();
+        settings = settings with { Sandboxes = remaining };
+        settings = remaining.Length == 0
+            ? settings with
+            {
+                InstanceName = "agent-sandbox",
+                ImportedLegacyInstance = false,
+                Resources = new ResourceProfile(4, 4, 50),
+                SelectedPresetIds = [],
+                SetupState = SetupState.ResourceConfiguration
+            }
+            : UpdateActive(settings, remaining.FirstOrDefault(item => item.InstanceName == settings.InstanceName) ?? remaining[0]) with { SetupState = SetupState.Ready };
         await settingsStore.SaveAsync(settings, cancellationToken);
-        return provisionResult with { Title = "Agent Sandbox is ready", UpdatedAt = DateTimeOffset.UtcNow };
+        return result;
     }
 
     public static SetupState DetermineNextState(HostReadiness host, AgentSandboxSettings settings)
@@ -117,11 +206,81 @@ public sealed class SetupCoordinator(
         if (!host.IsHyperVEnabled) return SetupState.HyperVRequired;
         if (!host.IsMultipassInstalled) return SetupState.MultipassRequired;
         if (!host.IsMultipassCompatible) return SetupState.NeedsReview;
+        if (settings.Sandboxes.Count > 0 && settings.SetupState == SetupState.NeedsReview) return SetupState.NeedsReview;
         if (settings.IsReady) return SetupState.Ready;
         return settings.SetupState is SetupState.Welcome or SetupState.CheckingHost or SetupState.HyperVRequired or
             SetupState.RebootRequired or SetupState.MultipassRequired or SetupState.StorageRequired or SetupState.NeedsReview
             ? SetupState.ResourceConfiguration
             : settings.SetupState;
+    }
+
+    public static IReadOnlyList<string> ValidateAggregateResources(
+        IReadOnlyList<SandboxConfiguration> existing,
+        ResourceProfile requested,
+        int logicalProcessors,
+        long totalMemoryBytes)
+    {
+        var errors = new List<string>();
+        if (existing.Sum(item => item.Resources.CpuCount) + requested.CpuCount > Math.Max(2, logicalProcessors - 2))
+            errors.Add("Combined sandbox CPUs must leave at least two logical processors for Windows.");
+        var totalMemoryGiB = (int)(totalMemoryBytes / 1_073_741_824L);
+        if (existing.Sum(item => item.Resources.MemoryGiB) + requested.MemoryGiB > Math.Max(4, totalMemoryGiB - 6))
+            errors.Add("Combined sandbox memory must leave at least 6 GiB for Windows.");
+        return errors;
+    }
+
+    private async Task<AgentSandboxSettings> NormalizeAsync(AgentSandboxSettings settings, CancellationToken cancellationToken)
+    {
+        var interrupted = settings.SetupState is SetupState.Provisioning or SetupState.InstallingPresets;
+        if (settings.Sandboxes.Count > 0 && interrupted)
+        {
+            settings = settings with { SetupState = SetupState.NeedsReview };
+            await settingsStore.SaveAsync(settings, cancellationToken);
+        }
+        else if (settings.Sandboxes.Count == 0)
+        {
+            var existing = interrupted ? await multipass.GetSandboxAsync(settings.InstanceName, cancellationToken) : null;
+            if (settings.IsReady || settings.ImportedLegacyInstance || existing is not null)
+            {
+                var configuration = new SandboxConfiguration(
+                    settings.InstanceName,
+                    existing?.Resources ?? settings.Resources,
+                    interrupted ? [] : settings.SelectedPresetIds,
+                    settings.ImportedLegacyInstance);
+                settings = UpdateActive(settings with { Sandboxes = [configuration] }, configuration) with
+                {
+                    SetupState = interrupted ? SetupState.NeedsReview : settings.SetupState
+                };
+                await settingsStore.SaveAsync(settings, cancellationToken);
+            }
+            else if (interrupted)
+            {
+                settings = settings with { SetupState = SetupState.ResourceConfiguration };
+                await settingsStore.SaveAsync(settings, cancellationToken);
+            }
+        }
+        else if (!settings.Sandboxes.Any(item => item.InstanceName == settings.InstanceName))
+        {
+            settings = UpdateActive(settings, settings.Sandboxes[0]);
+            await settingsStore.SaveAsync(settings, cancellationToken);
+        }
+        return settings;
+    }
+
+    private static AgentSandboxSettings UpdateActive(AgentSandboxSettings settings, SandboxConfiguration configuration) => settings with
+    {
+        InstanceName = configuration.InstanceName,
+        ImportedLegacyInstance = configuration.ImportedLegacyInstance,
+        Resources = configuration.Resources,
+        SelectedPresetIds = configuration.SelectedPresetIds
+    };
+
+    private static void ValidateInstanceName(string value)
+    {
+        if (!InstanceNamePattern.IsMatch(value))
+            throw new ArgumentException("VM names must start with a letter and contain only letters, numbers, and hyphens (maximum 63 characters).", nameof(value));
+        if (string.Equals(value, "primary", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("The Multipass name 'primary' is reserved.", nameof(value));
     }
 
     private static long GetFreeDiskBytes(string path)

@@ -36,6 +36,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string ErrorMessage { get; set; } = "";
     [ObservableProperty] public partial bool IsBusy { get; set; }
     [ObservableProperty] public partial bool CanOperateSandbox { get; set; }
+    [ObservableProperty] public partial bool CanManageSandbox { get; set; }
     [ObservableProperty] public partial string HostPath { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     [ObservableProperty] public partial string GuestPath { get; set; } = "/home/ubuntu/work";
     [ObservableProperty] public partial string CpuLabel { get; set; } = "—";
@@ -47,6 +48,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string GuestConnectionDetail { get; set; } = "Start the sandbox, then test the guest connection.";
     [ObservableProperty] public partial InfoBarSeverity GuestConnectionSeverity { get; set; } = InfoBarSeverity.Informational;
 
+    public ObservableCollection<SandboxConfiguration> Sandboxes { get; } = [];
     public ObservableCollection<HostFileItem> HostEntries { get; } = [];
     public ObservableCollection<GuestFileEntry> GuestEntries { get; } = [];
     public ObservableCollection<SnapshotInfo> Snapshots { get; } = [];
@@ -67,10 +69,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         {
             settings = await services.Lifecycle.ResumeSetupAsync();
             currentSetupState = settings.SetupState;
+            LoadSandboxes();
             await ApplySetupPresentationAsync();
-            CpuLabel = $"{settings.Resources.CpuCount} vCPU";
-            MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
-            DiskLabel = $"{settings.Resources.DiskGiB} GiB";
+            ApplyResourceLabels();
             await LoadPresetsAsync();
             await RefreshSandboxCoreAsync();
             LoadHostFiles();
@@ -180,13 +181,41 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         await ReloadSetupAsync();
     }
 
-    public async Task ProvisionAsync(ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null)
+    public async Task ProvisionAsync(string instanceName, ResourceProfile resources, IReadOnlyList<string> presetIds, IProgress<OperationProgress>? progress = null)
     {
-        var result = await services.Lifecycle.ProvisionAsync(resources, presetIds, progress);
+        var result = await services.Lifecycle.ProvisionAsync(instanceName, resources, presetIds, progress);
         await services.History.AppendAsync(result);
-        if (result.State != OperationState.Succeeded) throw new InvalidOperationException(result.Detail ?? result.Phase);
         OperationLabel = result.Phase;
         await ReloadSetupAsync();
+        if (result.State != OperationState.Succeeded) throw new InvalidOperationException(result.Detail ?? result.Phase);
+    }
+
+    public async Task SelectSandboxAsync(string instanceName)
+    {
+        if (HasActiveTransfer) throw new InvalidOperationException("Wait for the active transfer before switching sandboxes.");
+        if (string.Equals(instanceName, settings.InstanceName, StringComparison.Ordinal)) return;
+        settings = await services.Lifecycle.SelectSandboxAsync(instanceName);
+        ResetGuestNavigation();
+        LoadSandboxes();
+        ApplyResourceLabels();
+        await RefreshSandboxCoreAsync();
+    }
+
+    public async Task DeleteSandboxAsync(string instanceName)
+    {
+        if (HasActiveTransfer) throw new InvalidOperationException("Wait for the active transfer before deleting a sandbox.");
+        var result = await services.Lifecycle.DeleteSandboxAsync(instanceName);
+        services.RemoveGuestFiles(instanceName);
+        ResetGuestNavigation();
+        await services.History.AppendAsync(result);
+        await ReloadSetupAsync();
+    }
+
+    public async Task RebuildSandboxAsync(string instanceName)
+    {
+        var configuration = settings.Sandboxes.Single(item => string.Equals(item.InstanceName, instanceName, StringComparison.Ordinal));
+        await DeleteSandboxAsync(instanceName);
+        await ProvisionAsync(configuration.InstanceName, configuration.Resources, configuration.SelectedPresetIds);
     }
 
     public async Task SavePreferencesAsync(string theme, bool reducedMotion, bool updates, bool advancedBrowsing, string? releaseRepository = null)
@@ -333,10 +362,9 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         settings = await services.Lifecycle.ResumeSetupAsync();
         currentSetupState = settings.SetupState;
+        LoadSandboxes();
         await ApplySetupPresentationAsync();
-        CpuLabel = $"{settings.Resources.CpuCount} vCPU";
-        MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
-        DiskLabel = $"{settings.Resources.DiskGiB} GiB";
+        ApplyResourceLabels();
         await RefreshSandboxCoreAsync();
     }
 
@@ -362,6 +390,28 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
     {
         Presets.Clear();
         foreach (var preset in await services.Presets.GetAvailableAsync()) Presets.Add(preset);
+    }
+
+    private void LoadSandboxes()
+    {
+        Sandboxes.Clear();
+        foreach (var sandbox in settings.Sandboxes) Sandboxes.Add(sandbox);
+        CanManageSandbox = Sandboxes.Count > 0;
+    }
+
+    private void ResetGuestNavigation()
+    {
+        guestRootId = GuestRoots.Work;
+        guestPathComponents.Clear();
+        guestQuery = "";
+        GuestEntries.Clear();
+    }
+
+    private void ApplyResourceLabels()
+    {
+        CpuLabel = $"{settings.Resources.CpuCount} vCPU";
+        MemoryLabel = $"{settings.Resources.MemoryGiB} GiB";
+        DiskLabel = $"{settings.Resources.DiskGiB} GiB";
     }
 
     private async Task LoadGuestFilesCoreAsync()
@@ -522,7 +572,7 @@ public partial class MainPageViewModel : ObservableObject, IDisposable
         SetupState.MultipassRequired => "An existing compatible installation is preserved. Fresh installs use a pinned, verified Canonical MSI.",
         SetupState.ResourceConfiguration => "Review the recommended CPU, memory, and disk allocation before provisioning.",
         SetupState.NeedsReview => "Open Diagnostics to see the exact compatibility issue and remediation.",
-        _ => "The guided setup checks prerequisites and creates one isolated Ubuntu 24.04 VM."
+        _ => "The guided setup checks prerequisites and creates an isolated Ubuntu 24.04 VM."
     };
 
     private static string SetupAction(SetupState state) => state switch

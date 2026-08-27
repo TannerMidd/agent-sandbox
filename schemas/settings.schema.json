@@ -6,9 +6,34 @@
   "required": ["schemaVersion", "instanceName", "setupState", "resources"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "instanceName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,62}$" },
+    "instanceName": { "type": "string", "pattern": "^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" },
     "importedLegacyInstance": { "type": "boolean" },
+    "sandboxes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["instanceName", "resources", "selectedPresetIds"],
+        "properties": {
+          "instanceName": { "type": "string", "pattern": "^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" },
+          "resources": { "$ref": "#/$defs/resources" },
+          "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+          "importedLegacyInstance": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "setupState": { "type": "string" },
+    "resources": { "$ref": "#/$defs/resources" },
+    "storagePath": { "type": ["string", "null"] },
+    "theme": { "enum": ["System", "Dark", "Light"] },
+    "reducedMotion": { "type": "boolean" },
+    "advancedGuestBrowsing": { "type": "boolean" },
+    "checkForUpdates": { "type": "boolean" },
+    "lastUpdateCheck": { "type": ["string", "null"], "format": "date-time" },
+    "releaseRepository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+  },
+  "$defs": {
     "resources": {
       "type": "object",
       "required": ["cpuCount", "memoryGiB", "diskGiB"],
@@ -18,15 +43,7 @@
         "diskGiB": { "type": "integer", "minimum": 30 }
       },
       "additionalProperties": false
-    },
-    "storagePath": { "type": ["string", "null"] },
-    "theme": { "enum": ["System", "Dark", "Light"] },
-    "reducedMotion": { "type": "boolean" },
-    "advancedGuestBrowsing": { "type": "boolean" },
-    "checkForUpdates": { "type": "boolean" },
-    "lastUpdateCheck": { "type": ["string", "null"], "format": "date-time" },
-    "releaseRepository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-    "selectedPresetIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+    }
   },
   "additionalProperties": false
 }

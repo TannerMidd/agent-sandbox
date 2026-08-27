@@ -2,12 +2,19 @@ using System.Text.Json.Serialization;
 
 namespace AgentSandbox.Domain;
 
+public sealed record SandboxConfiguration(
+    string InstanceName,
+    ResourceProfile Resources,
+    IReadOnlyList<string> SelectedPresetIds,
+    bool ImportedLegacyInstance = false);
+
 public sealed record AgentSandboxSettings
 {
     public const int CurrentSchemaVersion = 1;
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string InstanceName { get; init; } = "agent-sandbox";
     public bool ImportedLegacyInstance { get; init; }
+    public IReadOnlyList<SandboxConfiguration> Sandboxes { get; init; } = [];
     public SetupState SetupState { get; init; } = SetupState.Welcome;
     public ResourceProfile Resources { get; init; } = new(4, 4, 50);
     public string? StoragePath { get; init; }
