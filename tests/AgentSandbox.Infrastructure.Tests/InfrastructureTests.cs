@@ -70,6 +70,20 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
+    public async Task StoppedSandboxWithNoIpAddressIsParsed()
+    {
+        var runner = new ScriptedRunner(new ProcessResult(0,
+            "{\"list\":[{\"ipv4\":[],\"name\":\"agent-dev\",\"release\":\"Ubuntu 24.04 LTS\",\"state\":\"Stopped\"}]}", ""));
+        var service = new MultipassService(runner, new FixedLocator());
+
+        var sandbox = Assert.Single(await service.ListSandboxesAsync());
+
+        Assert.Equal("agent-dev", sandbox.InstanceName);
+        Assert.Equal(SandboxState.Stopped, sandbox.State);
+        Assert.Null(sandbox.IPv4Address);
+    }
+
+    [Fact]
     public async Task ExactDeleteNeverUsesGlobalPurge()
     {
         var runner = new ScriptedRunner(

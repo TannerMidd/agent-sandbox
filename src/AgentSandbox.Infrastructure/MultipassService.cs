@@ -168,7 +168,18 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
     };
 
     private static string? ReadString(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-    private static string? ReadFirstString(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().FirstOrDefault().GetString() : ReadString(element, property);
+    private static string? ReadFirstString(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) return null;
+        if (value.ValueKind != JsonValueKind.Array) return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String) return item.GetString();
+        }
+
+        return null;
+    }
 
     private static void CollectSnapshots(JsonElement element, string instanceName, ICollection<SnapshotInfo> output)
     {
