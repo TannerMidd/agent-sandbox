@@ -424,11 +424,29 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
-    public void MultipassDiscoveryUsesOnlyProtectedSignedCanonicalInstallation()
+    public void MultipassDiscoveryAcceptsRegisteredCanonicalBinaryWithoutEmbeddedSignatureMetadata()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
+        var executable = Path.Combine(directory, "Multipass", "bin", "multipass.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        File.WriteAllBytes(executable, []);
+        try
+        {
+            Assert.True(MultipassLocator.IsCanonicalExecutable(executable, executable, hasCanonicalWindowsRegistration: true));
+            Assert.False(MultipassLocator.IsCanonicalExecutable(executable, executable, hasCanonicalWindowsRegistration: false));
+            Assert.False(MultipassLocator.IsCanonicalExecutable(executable, Path.Combine(directory, "other.exe"), hasCanonicalWindowsRegistration: true));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultipassDiscoveryDoesNotSearchTheUserPath()
     {
         var source = File.ReadAllText(RepoFile("src/AgentSandbox.Infrastructure/MultipassLocator.cs"));
         Assert.DoesNotContain("GetEnvironmentVariable(\"PATH\")", source, StringComparison.Ordinal);
-        Assert.Contains("WindowsAuthenticodeVerifier.IsTrustedSignedBy", source, StringComparison.Ordinal);
         Assert.Contains("HasCanonicalWindowsRegistration", source, StringComparison.Ordinal);
     }
 
