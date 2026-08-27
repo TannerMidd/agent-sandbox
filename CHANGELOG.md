@@ -12,6 +12,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Added per-VM Linux image selection for Ubuntu 24.04/22.04, Debian 13, Arch Linux, Fedora Cloud 44, Alpine 3.22, and advanced custom HTTPS cloud images with image-aware resources and cross-distro provisioning.
 - Added a daemonless Python guest helper with paged listings, text editing, trash/restore, permissions, archives, and strict path controls.
 - Added a professional dark dashboard, dual-pane file workspace, recovery, diagnostics, and settings views.
+- Replaced the placeholder Windows artwork with a branded multi-resolution app, taskbar, tile, and splash icon set.
 - Added exact-version Codex, Claude Code, Gemini CLI, and Pi manifests with npm integrity metadata.
 - Added tests, unsigned WiX release scaffolding, CI, documentation, SBOM, checksum, and attestation workflows.
 - Fixed existing `agent-dev` discovery so import remains available during host-review states and never renames, migrates, or rebuilds the VM.

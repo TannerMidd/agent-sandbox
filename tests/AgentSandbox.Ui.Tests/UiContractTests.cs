@@ -79,6 +79,40 @@ public sealed class UiContractTests
     }
 
     [Fact]
+    public void AppIconIsMultiResolutionAndAppliedToTheExecutable()
+    {
+        var icon = File.ReadAllBytes(RepoFile("src", "AgentSandbox.App", "Assets", "AppIcon.ico"));
+        Assert.Equal(0, BitConverter.ToUInt16(icon, 0));
+        Assert.Equal(1, BitConverter.ToUInt16(icon, 2));
+        var count = BitConverter.ToUInt16(icon, 4);
+        Assert.True(count >= 8);
+        var sizes = Enumerable.Range(0, count)
+            .Select(index => icon[6 + index * 16] is 0 ? 256 : icon[6 + index * 16])
+            .ToArray();
+        foreach (var required in new[] { 16, 20, 24, 32, 40, 48, 64, 128, 256 })
+            Assert.Contains(required, sizes);
+
+        var project = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "AgentSandbox.App.csproj"));
+        var window = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "MainWindow.xaml.cs"));
+        Assert.Contains("<ApplicationIcon>Assets\\AppIcon.ico</ApplicationIcon>", project, StringComparison.Ordinal);
+        Assert.Contains("AppWindow.SetIcon(\"Assets/AppIcon.ico\")", window, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Square44x44Logo.scale-200.png", 88, 88)]
+    [InlineData("Square150x150Logo.scale-200.png", 300, 300)]
+    [InlineData("StoreLogo.png", 50, 50)]
+    public void PackageLogoAssetsHaveExpectedDimensions(string name, int expectedWidth, int expectedHeight)
+    {
+        var png = File.ReadAllBytes(RepoFile("src", "AgentSandbox.App", "Assets", name));
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, png[..8]);
+        var width = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16, 4));
+        var height = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20, 4));
+        Assert.Equal(expectedWidth, width);
+        Assert.Equal(expectedHeight, height);
+    }
+
+    [Fact]
     public void DarkThemeIsTheSafeDefault()
     {
         var app = File.ReadAllText(RepoFile("src", "AgentSandbox.App", "App.xaml"));
