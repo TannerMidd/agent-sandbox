@@ -13,7 +13,12 @@ write_files:
       #!/bin/sh
       set -eu
 
+      # Replaced by the host immediately before launch. Provisioning fails closed
+      # if this marker is missing from the packaged template.
+      # {{AGENT_SANDBOX_HARDENING_CONFIGURATION}}
+
       if command -v apt-get >/dev/null 2>&1; then
+        package_family='apt'
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y \
@@ -37,37 +42,120 @@ write_files:
         rm -f "/tmp/${node_archive}"
 
         systemctl enable --now docker
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow 22/tcp
-        ufw --force enable
       elif command -v apk >/dev/null 2>&1; then
+        package_family='apk'
         apk update
         apk add \
           bash build-base ca-certificates curl docker docker-cli-compose fd git git-lfs jq nodejs npm \
-          pipx py3-pip python3 ripgrep shadow shellcheck sudo tmux unzip xz zip
+          pipx py3-pip python3 ripgrep shadow shellcheck sudo tmux ufw unzip xz zip
         rc-update add docker default
         rc-service docker start
       elif command -v dnf >/dev/null 2>&1; then
+        package_family='dnf'
         dnf -y install \
-          '@development-tools' bash ca-certificates curl fd-find firewalld git git-lfs jq \
+          '@development-tools' bash ca-certificates curl fd-find firewalld git git-lfs iptables-nft jq \
           moby-engine nodejs npm pipx python3 python3-pip ripgrep ShellCheck sudo tmux unzip xz zip
         systemctl enable --now docker
         systemctl enable --now firewalld
-        firewall-cmd --permanent --add-service=ssh
-        firewall-cmd --reload
       elif command -v pacman >/dev/null 2>&1; then
+        package_family='pacman'
         pacman -Syu --noconfirm --needed \
           base-devel bash ca-certificates curl docker fd git git-lfs jq nodejs npm \
           python python-pip python-pipx ripgrep shellcheck sudo tmux ufw unzip xz zip
         systemctl enable --now docker
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow 22/tcp
-        ufw --force enable
       else
         echo 'Agent Sandbox supports apt, apk, dnf, and pacman cloud images.' >&2
         exit 1
+      fi
+
+      if [ "$automatic_security_updates" = 'true' ]; then
+        case "$package_family" in
+          apt)
+            apt-get install -y unattended-upgrades
+            cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      EOF
+            ;;
+          dnf)
+            dnf -y install dnf-automatic
+            sed -i 's/^upgrade_type[[:space:]]*=.*/upgrade_type = security/; s/^apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf
+            systemctl enable --now dnf-automatic.timer
+            ;;
+          apk)
+            cat > /etc/periodic/daily/agent-sandbox-security-updates <<'EOF'
+      #!/bin/sh
+      set -eu
+      apk update
+      exec apk upgrade --available
+      EOF
+            chmod 0755 /etc/periodic/daily/agent-sandbox-security-updates
+            rc-update add crond default
+            rc-service crond start
+            ;;
+          pacman)
+            cat > /usr/local/sbin/agent-sandbox-security-update <<'EOF'
+      #!/bin/sh
+      exec pacman -Syu --noconfirm
+      EOF
+            chmod 0755 /usr/local/sbin/agent-sandbox-security-update
+            cat > /etc/systemd/system/agent-sandbox-security-update.service <<'EOF'
+      [Unit]
+      Description=Agent Sandbox automatic package update
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/agent-sandbox-security-update
+      EOF
+            cat > /etc/systemd/system/agent-sandbox-security-update.timer <<'EOF'
+      [Unit]
+      Description=Daily Agent Sandbox package update
+      [Timer]
+      OnCalendar=daily
+      RandomizedDelaySec=1h
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+      EOF
+            systemctl daemon-reload
+            systemctl enable --now agent-sandbox-security-update.timer
+            ;;
+        esac
+      fi
+
+      install -d -m 0755 /etc/agent-sandbox
+      if [ "$audit_security_events" = 'true' ]; then
+        case "$package_family" in
+          apt) apt-get install -y auditd ;;
+          apk) apk add audit ;;
+          dnf) dnf -y install audit ;;
+          pacman) pacman -S --noconfirm --needed audit ;;
+        esac
+        if ! command -v auditctl >/dev/null 2>&1; then
+          echo 'Security auditing was requested but auditctl is unavailable.' >&2
+          exit 1
+        fi
+        if command -v auditctl >/dev/null 2>&1; then
+          install -d -m 0750 /etc/audit/rules.d
+          cat > /etc/audit/rules.d/60-agent-sandbox.rules <<'EOF'
+      -w /etc/sudoers -p wa -k agent-sandbox-privilege
+      -w /etc/sudoers.d -p wa -k agent-sandbox-privilege
+      -w /etc/ssh/sshd_config -p wa -k agent-sandbox-ssh
+      -w /etc/ssh/sshd_config.d -p wa -k agent-sandbox-ssh
+      -w /etc/agent-sandbox -p wa -k agent-sandbox-policy
+      EOF
+          if command -v augenrules >/dev/null 2>&1; then
+            augenrules --load
+          fi
+          if command -v systemctl >/dev/null 2>&1; then
+            systemctl enable auditd
+            systemctl start auditd || service auditd start
+          else
+            rc-update add auditd default
+            rc-service auditd start
+          fi
+          auditctl -s >/dev/null
+          auditctl -l | grep -F 'agent-sandbox-policy' >/dev/null
+        fi
       fi
 
       git lfs install --system
@@ -81,10 +169,23 @@ write_files:
       install -d -m 0755 /home/ubuntu/.local/lib/agent-sandbox/requests
       install -d -m 0755 /home/ubuntu/work
       chown -R "$guest_user:$guest_group" /home/ubuntu
-      if command -v usermod >/dev/null 2>&1; then
-        usermod -aG docker "$guest_user"
+
+      if [ "$allow_administrative_tools" = 'true' ]; then
+        if command -v usermod >/dev/null 2>&1; then
+          usermod -aG docker "$guest_user"
+        else
+          addgroup "$guest_user" docker
+        fi
       else
-        addgroup "$guest_user" docker
+        if command -v gpasswd >/dev/null 2>&1; then
+          gpasswd -d "$guest_user" docker >/dev/null 2>&1 || true
+        elif command -v delgroup >/dev/null 2>&1; then
+          delgroup "$guest_user" docker >/dev/null 2>&1 || true
+        fi
+        if [ -d /etc/sudoers.d ]; then
+          printf '%s ALL=(ALL:ALL) ALL\n' "$guest_user" > /etc/sudoers.d/99-agent-sandbox-require-password
+          chmod 0440 /etc/sudoers.d/99-agent-sandbox-require-password
+        fi
       fi
 
       install -d -m 0755 /etc/ssh/sshd_config.d
@@ -93,6 +194,8 @@ write_files:
       KbdInteractiveAuthentication no
       PermitRootLogin no
       PermitEmptyPasswords no
+      AllowTcpForwarding no
+      X11Forwarding no
       EOF
       if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
         sed -i '1iInclude /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
@@ -103,6 +206,132 @@ write_files:
       else
         rc-service sshd restart
       fi
+
+      sysctl_policy=/etc/sysctl.d/60-agent-sandbox-hardening.conf
+      : > "$sysctl_policy"
+      set_sysctl_exact() {
+        key="$1"
+        expected="$2"
+        if ! sysctl -n "$key" >/dev/null 2>&1; then
+          echo "Requested hardening control is unsupported: $key" >&2
+          exit 1
+        fi
+        sysctl -w "$key=$expected" >/dev/null
+        actual="$(sysctl -n "$key")"
+        if [ "$actual" != "$expected" ]; then
+          echo "Hardening verification failed for $key: expected $expected, got $actual" >&2
+          exit 1
+        fi
+        printf '%s = %s\n' "$key" "$expected" >> "$sysctl_policy"
+      }
+      set_sysctl_at_least() {
+        key="$1"
+        minimum="$2"
+        if ! actual="$(sysctl -n "$key" 2>/dev/null)"; then
+          echo "Requested hardening control is unsupported: $key" >&2
+          exit 1
+        fi
+        if [ "$actual" -lt "$minimum" ]; then
+          sysctl -w "$key=$minimum" >/dev/null
+          actual="$(sysctl -n "$key")"
+        fi
+        if [ "$actual" -lt "$minimum" ]; then
+          echo "Hardening verification failed for $key: expected at least $minimum, got $actual" >&2
+          exit 1
+        fi
+        printf '%s = %s\n' "$key" "$actual" >> "$sysctl_policy"
+      }
+      set_sysctl_optional() {
+        key="$1"
+        expected="$2"
+        if sysctl -n "$key" >/dev/null 2>&1; then
+          set_sysctl_exact "$key" "$expected"
+        fi
+      }
+
+      if [ "$kernel_hardening" = 'true' ]; then
+        set_sysctl_at_least kernel.dmesg_restrict 1
+        set_sysctl_at_least kernel.kptr_restrict 2
+        set_sysctl_at_least kernel.yama.ptrace_scope 1
+        set_sysctl_at_least fs.protected_fifos 2
+        set_sysctl_at_least fs.protected_hardlinks 1
+        set_sysctl_at_least fs.protected_regular 2
+        set_sysctl_at_least fs.protected_symlinks 1
+        set_sysctl_exact net.ipv4.conf.all.accept_redirects 0
+        set_sysctl_exact net.ipv4.conf.all.send_redirects 0
+        set_sysctl_exact net.ipv4.conf.default.accept_redirects 0
+        set_sysctl_exact net.ipv4.conf.default.send_redirects 0
+        set_sysctl_optional net.ipv6.conf.all.accept_redirects 0
+        set_sysctl_optional net.ipv6.conf.default.accept_redirects 0
+      fi
+      if [ "$restrict_unprivileged_features" = 'true' ]; then
+        set_sysctl_at_least kernel.unprivileged_bpf_disabled 1
+        set_sysctl_exact user.max_user_namespaces 0
+        if sysctl -n kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+          set_sysctl_exact kernel.unprivileged_userns_clone 0
+        fi
+        cat > /etc/security/limits.d/60-agent-sandbox.conf <<'EOF'
+      * hard core 0
+      root hard core 0
+      EOF
+        grep -Fx '* hard core 0' /etc/security/limits.d/60-agent-sandbox.conf >/dev/null
+      fi
+      if [ ! -s "$sysctl_policy" ]; then
+        rm -f "$sysctl_policy"
+      fi
+
+      management_gateway="$(ip -4 route show default | awk 'NR == 1 { print $3 }')"
+      if [ -z "$management_gateway" ]; then
+        echo 'Could not determine the Multipass management gateway for SSH policy.' >&2
+        exit 1
+      fi
+      if command -v ufw >/dev/null 2>&1; then
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow from "$management_gateway" to any port 22 proto tcp
+        if [ "$network_access" != 'unrestricted' ]; then
+          ufw default deny outgoing
+          ufw allow out 67:68/udp
+          ufw allow out 546:547/udp
+          if [ "$network_access" = 'web-only' ]; then
+            ufw allow out 53
+            ufw allow out 123/udp
+            ufw allow out 80/tcp
+            ufw allow out 443/tcp
+          fi
+        fi
+        ufw --force enable
+      elif command -v firewall-cmd >/dev/null 2>&1; then
+        firewall-cmd --permanent --remove-service=ssh || true
+        firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=${management_gateway}/32 service name=ssh accept"
+        if [ "$network_access" != 'unrestricted' ]; then
+          firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 0 -o lo -j ACCEPT
+          firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 2 -p udp --sport 68 --dport 67 -j ACCEPT
+          firewall-cmd --permanent --direct --add-rule ipv6 filter OUTPUT 0 -o lo -j ACCEPT
+          firewall-cmd --permanent --direct --add-rule ipv6 filter OUTPUT 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          firewall-cmd --permanent --direct --add-rule ipv6 filter OUTPUT 2 -p udp --sport 546 --dport 547 -j ACCEPT
+          for family in ipv4 ipv6; do
+            if [ "$network_access" = 'web-only' ]; then
+              firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 10 -p udp --dport 53 -j ACCEPT
+              firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 11 -p tcp --dport 53 -j ACCEPT
+              firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 12 -p udp --dport 123 -j ACCEPT
+              firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 13 -p tcp --dport 80 -j ACCEPT
+              firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 14 -p tcp --dport 443 -j ACCEPT
+            fi
+            firewall-cmd --permanent --direct --add-rule "$family" filter OUTPUT 100 -j DROP
+          done
+        fi
+        firewall-cmd --reload
+      else
+        echo 'No supported guest firewall was installed.' >&2
+        exit 1
+      fi
+
+      cat > /etc/agent-sandbox/hardening.json <<EOF
+      {"schemaVersion":1,"presetId":"${hardening_preset}","automaticSecurityUpdates":${automatic_security_updates},"kernelHardening":${kernel_hardening},"restrictUnprivilegedFeatures":${restrict_unprivileged_features},"auditSecurityEvents":${audit_security_events},"networkAccess":"${network_access}","allowAdministrativeTools":${allow_administrative_tools}}
+      EOF
+      chmod 0644 /etc/agent-sandbox/hardening.json
 
 runcmd:
   - [sh, /usr/local/sbin/agent-sandbox-provision]

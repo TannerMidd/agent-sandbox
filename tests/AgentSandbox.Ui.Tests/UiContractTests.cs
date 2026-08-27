@@ -70,6 +70,11 @@ public sealed class UiContractTests
         Assert.Contains("ProvisionAsync", code, StringComparison.Ordinal);
         Assert.Contains("Linux image", code, StringComparison.Ordinal);
         Assert.Contains("LinuxImages.GetRequired", code, StringComparison.Ordinal);
+        Assert.Contains("Hardening preset", code, StringComparison.Ordinal);
+        Assert.Contains("HardeningPresetOptions", code, StringComparison.Ordinal);
+        Assert.Contains("Outbound network access", code, StringComparison.Ordinal);
+        Assert.Contains("Allow passwordless administration", code, StringComparison.Ordinal);
+        Assert.Contains("selectedHardening.Validate()", code, StringComparison.Ordinal);
         Assert.Contains("Type {exact}", code, StringComparison.Ordinal);
         Assert.Contains("Purge forever", code, StringComparison.Ordinal);
         Assert.Contains("OVERWRITE", code, StringComparison.Ordinal);

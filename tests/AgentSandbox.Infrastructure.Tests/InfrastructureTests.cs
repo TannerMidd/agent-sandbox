@@ -24,12 +24,13 @@ public sealed class InfrastructureTests
             {
                 InstanceName = "agent-sandbox-two",
                 ImageId = "alpine-3.22",
+                Hardening = HardeningPresets.GetRequired(HardeningPresets.RestrictedId).Options,
                 Theme = "Dark",
                 SetupState = SetupState.Ready,
                 Sandboxes =
                 [
                     new SandboxConfiguration("agent-sandbox-one", new ResourceProfile(2, 4, 30), []),
-                    new SandboxConfiguration("agent-sandbox-two", new ResourceProfile(4, 8, 50), ["codex"], ImageId: "alpine-3.22")
+                    new SandboxConfiguration("agent-sandbox-two", new ResourceProfile(4, 8, 50), ["codex"], ImageId: "alpine-3.22", Hardening: HardeningPresets.GetRequired(HardeningPresets.RestrictedId).Options)
                 ]
             };
             await store.SaveAsync(expected);
@@ -38,10 +39,15 @@ public sealed class InfrastructureTests
             Assert.Equal(expected.Theme, actual.Theme);
             Assert.Equal(expected.SetupState, actual.SetupState);
             Assert.Equal("alpine-3.22", actual.ImageId);
+            Assert.Equal(HardeningPresets.RestrictedId, actual.Hardening.PresetId);
             Assert.Equal("alpine-3.22", actual.Sandboxes[1].ImageId);
+            Assert.Equal(NetworkAccessPolicy.WebOnly, actual.Sandboxes[1].Hardening?.NetworkAccess);
             Assert.Equal(expected.Resources, actual.Resources);
             Assert.Equal(expected.SelectedPresetIds, actual.SelectedPresetIds);
-            Assert.Equal(expected.Sandboxes, actual.Sandboxes);
+            Assert.Equal(expected.Sandboxes.Select(item => item.InstanceName), actual.Sandboxes.Select(item => item.InstanceName));
+            Assert.Equal(expected.Sandboxes.Select(item => item.Resources), actual.Sandboxes.Select(item => item.Resources));
+            Assert.Equal(expected.Sandboxes[1].SelectedPresetIds, actual.Sandboxes[1].SelectedPresetIds);
+            Assert.Equal(expected.Sandboxes[1].Hardening, actual.Sandboxes[1].Hardening);
             Assert.False(File.Exists(path + ".tmp"));
         }
         finally { Directory.Delete(directory, recursive: true); }
@@ -58,8 +64,46 @@ public sealed class InfrastructureTests
             await File.WriteAllTextAsync(path, "{\"schemaVersion\":1,\"instanceName\":\"agent-sandbox-old\",\"sandboxes\":[],\"setupState\":0,\"resources\":{\"cpuCount\":2,\"memoryGiB\":4,\"diskGiB\":30}}");
             var settings = await new JsonSettingsStore(path).LoadAsync();
             Assert.Equal(LinuxImages.DefaultId, settings.ImageId);
+            Assert.Equal(HardeningPresets.DevelopmentId, settings.Hardening.PresetId);
         }
         finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void RestrictedHardeningIsRenderedIntoCloudInitWithoutLeavingTemplateMarkers()
+    {
+        var template = $"#cloud-config{Environment.NewLine}{CloudInitRenderer.ConfigurationMarker}";
+
+        var rendered = CloudInitRenderer.Render(template, HardeningPresets.GetRequired(HardeningPresets.RestrictedId).Options);
+
+        Assert.Contains("hardening_preset='restricted'", rendered, StringComparison.Ordinal);
+        Assert.Contains("network_access='web-only'", rendered, StringComparison.Ordinal);
+        Assert.Contains("allow_administrative_tools='false'", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("{{AGENT_SANDBOX_HARDENING_CONFIGURATION}}", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CloudInitWithoutHardeningMarkerFailsClosed() =>
+        Assert.Throws<InvalidDataException>(() => CloudInitRenderer.Render("#cloud-config", SandboxHardeningOptions.Development));
+
+    [Fact]
+    public void PackagedCloudInitImplementsPortableFailClosedHardeningControls()
+    {
+        var template = File.ReadAllText(RepoFile("cloud-init.yaml"));
+
+        foreach (var family in new[] { "package_family='apt'", "package_family='apk'", "package_family='dnf'", "package_family='pacman'" })
+            Assert.Contains(family, template, StringComparison.Ordinal);
+        Assert.Contains("apk update", template, StringComparison.Ordinal);
+        Assert.Contains("set_sysctl_exact user.max_user_namespaces 0", template, StringComparison.Ordinal);
+        Assert.Contains("Hardening verification failed", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("sysctl --system >/dev/null 2>&1 || true", template, StringComparison.Ordinal);
+        Assert.Contains("management_gateway=", template, StringComparison.Ordinal);
+        Assert.Contains("ufw allow from \"$management_gateway\" to any port 22", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("ufw allow 22/tcp", template, StringComparison.Ordinal);
+        Assert.Contains("--sport 68 --dport 67", template, StringComparison.Ordinal);
+        Assert.Contains("--sport 546 --dport 547", template, StringComparison.Ordinal);
+        Assert.Contains("99-agent-sandbox-require-password", template, StringComparison.Ordinal);
+        Assert.True(template.IndexOf("cat > /etc/agent-sandbox/hardening.json", StringComparison.Ordinal) > template.IndexOf("firewall-cmd --reload", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -157,7 +201,7 @@ public sealed class InfrastructureTests
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var cloudInit = Path.Combine(directory, "cloud-init.yaml");
-        await File.WriteAllTextAsync(cloudInit, "#cloud-config");
+        await File.WriteAllTextAsync(cloudInit, $"#cloud-config{Environment.NewLine}{CloudInitRenderer.ConfigurationMarker}");
         try
         {
             var runner = new ScriptedRunner(
@@ -176,12 +220,43 @@ public sealed class InfrastructureTests
     }
 
     [Fact]
+    public async Task SuccessfulProvisioningVerifiesHardeningArtifactAndDeletesRenderedCloudInit()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var cloudInit = Path.Combine(directory, "cloud-init.yaml");
+        await File.WriteAllTextAsync(cloudInit, $"#cloud-config{Environment.NewLine}{CloudInitRenderer.ConfigurationMarker}");
+        try
+        {
+            var runner = new ScriptedRunner(
+                new ProcessResult(0, "{\"list\":[]}", ""),
+                new ProcessResult(0, "", ""),
+                new ProcessResult(0, "", ""),
+                new ProcessResult(0, "", ""),
+                new ProcessResult(0, "", ""),
+                new ProcessResult(0, "", ""),
+                new ProcessResult(0, "", ""));
+            var service = new MultipassService(runner, new FixedLocator());
+
+            var result = await service.ProvisionAsync(new ProvisionRequest(
+                "agent-sandbox", "24.04", new ResourceProfile(2, 4, 30), cloudInit, "clean",
+                Hardening: HardeningPresets.GetRequired(HardeningPresets.RestrictedId).Options));
+
+            Assert.Equal(OperationState.Succeeded, result.State);
+            Assert.Contains("/etc/agent-sandbox/hardening.json", runner.Calls[3][5], StringComparison.Ordinal);
+            var renderedPath = runner.Calls[1][Array.IndexOf(runner.Calls[1].ToArray(), "--cloud-init") + 1];
+            Assert.False(File.Exists(renderedPath));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public async Task PartialProvisioningIsReportedForRecovery()
     {
         var directory = Path.Combine(Path.GetTempPath(), "AgentSandbox.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var cloudInit = Path.Combine(directory, "cloud-init.yaml");
-        await File.WriteAllTextAsync(cloudInit, "#cloud-config");
+        await File.WriteAllTextAsync(cloudInit, $"#cloud-config{Environment.NewLine}{CloudInitRenderer.ConfigurationMarker}");
         try
         {
             var runner = new ScriptedRunner(
@@ -253,6 +328,14 @@ public sealed class InfrastructureTests
             Assert.DoesNotContain(Environment.UserName, item.Detail!, StringComparison.OrdinalIgnoreCase);
         }
         finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static string RepoFile(string name)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AgentSandbox.slnx"))) directory = directory.Parent;
+        if (directory is null) throw new DirectoryNotFoundException("Repository root was not found.");
+        return Path.Combine(directory.FullName, name);
     }
 
     private sealed class FixedLocator : IMultipassLocator { public string? Locate() => "fake-multipass.exe"; }

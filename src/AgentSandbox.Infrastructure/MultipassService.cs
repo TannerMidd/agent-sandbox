@@ -112,20 +112,23 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             ? "custom Linux image"
             : LinuxImages.All.Single(item => string.Equals(item.ImageReference, request.Image, StringComparison.Ordinal)).DisplayName;
         Report(progress, id, "Provision sandbox", OperationState.Running, $"Launching {imageName}");
-        var arguments = new[]
-        {
-            "launch", request.Image, "--name", request.InstanceName,
-            "--cpus", request.Resources.CpuCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--memory", $"{request.Resources.MemoryGiB}G",
-            "--disk", $"{request.Resources.DiskGiB}G",
-            "--cloud-init", Path.GetFullPath(request.CloudInitPath), "--timeout", "1800"
-        };
+        string? renderedCloudInitPath = null;
         try
         {
+            var hardening = request.Hardening ?? SandboxHardeningOptions.Development;
+            renderedCloudInitPath = await CloudInitRenderer.CreateTemporaryAsync(request.CloudInitPath, hardening, cancellationToken);
+            var arguments = new[]
+            {
+                "launch", request.Image, "--name", request.InstanceName,
+                "--cpus", request.Resources.CpuCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--memory", $"{request.Resources.MemoryGiB}G",
+                "--disk", $"{request.Resources.DiskGiB}G",
+                "--cloud-init", renderedCloudInitPath, "--timeout", "1800"
+            };
             await RunAsync(arguments, TimeSpan.FromMinutes(35), cancellationToken);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Waiting for cloud-init");
             await RunAsync(["exec", request.InstanceName, "--", "cloud-init", "status", "--wait"], TimeSpan.FromMinutes(30), cancellationToken);
-            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", "set -eu; test -d /home/ubuntu/work; command -v git; command -v python3; command -v docker; command -v npm; node -e 'if (+process.versions.node.split(\".\")[0] < 20) process.exit(1)'; docker info >/dev/null"], TimeSpan.FromMinutes(5), cancellationToken);
+            await RunAsync(["exec", request.InstanceName, "--", "bash", "-lc", "set -eu; test -d /home/ubuntu/work; test -s /etc/agent-sandbox/hardening.json; command -v git; command -v python3; command -v docker; command -v npm; node -e 'if (+process.versions.node.split(\".\")[0] < 20) process.exit(1)'; test -S /var/run/docker.sock"], TimeSpan.FromMinutes(5), cancellationToken);
             Report(progress, id, "Provision sandbox", OperationState.Running, "Creating clean baseline");
             await RunAsync(["stop", request.InstanceName], TimeSpan.FromMinutes(10), cancellationToken);
             await RunAsync(["snapshot", request.InstanceName, "--name", ValidateIdentifier(request.BaselineSnapshot)], TimeSpan.FromMinutes(10), cancellationToken);
@@ -139,6 +142,13 @@ public sealed class MultipassService(IProcessRunner runner, IMultipassLocator lo
             var state = partialExists ? OperationState.CleanupPending : exception is OperationCanceledException ? OperationState.Canceled : OperationState.Failed;
             var phase = partialExists ? "Provisioning stopped; the partial VM was preserved for diagnostics" : "Provisioning failed before the VM was created";
             return Report(progress, id, "Provision sandbox", state, phase, "PROVISION_FAILED", exception.Message);
+        }
+        finally
+        {
+            if (renderedCloudInitPath is not null)
+            {
+                try { File.Delete(renderedCloudInitPath); } catch { }
+            }
         }
     }
 

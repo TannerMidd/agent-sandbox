@@ -19,6 +19,12 @@ public sealed partial class MainPage : Page
 {
     private bool settingsLoaded;
     private bool updatingSandboxPicker;
+    private static readonly IReadOnlyList<NetworkPolicyChoice> NetworkPolicyChoices =
+    [
+        new(NetworkAccessPolicy.Unrestricted, "Unrestricted outbound"),
+        new(NetworkAccessPolicy.WebOnly, "Web only (DNS, time, HTTP/S)"),
+        new(NetworkAccessPolicy.Offline, "Offline after provisioning")
+    ];
     private readonly DispatcherTimer resourceUsageTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public MainPageViewModel ViewModel { get; } = new();
@@ -216,6 +222,94 @@ public sealed partial class MainPage : Page
             memory.Value = Math.Clamp(image.RecommendedResources.MemoryGiB, image.MinimumResources.MemoryGiB, recommendation.MemoryGiB);
             disk.Value = Math.Clamp(image.RecommendedResources.DiskGiB, image.MinimumResources.DiskGiB, recommendation.DiskGiB);
         };
+        var selectedHardening = ViewModel.CurrentSettings.Hardening;
+        selectedHardening.Validate();
+        var hardeningDescription = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.72 };
+        var compatibilityNote = new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Informational };
+        var hardeningPicker = new ComboBox
+        {
+            Header = "Hardening preset",
+            ItemsSource = ViewModel.HardeningPresetOptions,
+            DisplayMemberPath = nameof(HardeningPreset.DisplayName),
+            SelectedItem = ViewModel.HardeningPresetOptions.SingleOrDefault(item => item.Id == selectedHardening.PresetId),
+            PlaceholderText = "Custom hardening",
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var automaticUpdates = new CheckBox { Content = "Install automatic operating-system/package updates", IsChecked = selectedHardening.AutomaticSecurityUpdates };
+        var kernelHardening = new CheckBox { Content = "Enable kernel and network sysctl safeguards", IsChecked = selectedHardening.KernelHardening };
+        var restrictFeatures = new CheckBox { Content = "Disable unprivileged user namespaces, BPF, and core dumps", IsChecked = selectedHardening.RestrictUnprivilegedFeatures };
+        var auditEvents = new CheckBox { Content = "Audit changes to sudo, SSH, and sandbox policy", IsChecked = selectedHardening.AuditSecurityEvents };
+        var administrativeTools = new CheckBox { Content = "Allow passwordless administration and non-root Docker access", IsChecked = selectedHardening.AllowAdministrativeTools };
+        var networkAccess = new ComboBox
+        {
+            Header = "Outbound network access",
+            ItemsSource = NetworkPolicyChoices,
+            DisplayMemberPath = nameof(NetworkPolicyChoice.DisplayName),
+            SelectedItem = NetworkPolicyChoices.Single(item => item.Policy == selectedHardening.NetworkAccess),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var applyingHardeningPreset = false;
+        Action updateAgentPresetAvailability = () => { };
+        void ShowHardeningDescription(HardeningPreset? preset)
+        {
+            hardeningDescription.Text = preset?.Description ?? "Custom settings combine the controls below. Inbound traffic remains denied and SSH password/root login remain disabled for every configuration.";
+            compatibilityNote.Title = preset?.DisplayName ?? "Custom hardening";
+            compatibilityNote.Message = preset?.CompatibilityNote ?? "Review network, privilege, container, debugger, and update compatibility before creating the VM.";
+            compatibilityNote.Severity = preset?.Id is HardeningPresets.RestrictedId or HardeningPresets.OfflineId ? InfoBarSeverity.Warning : InfoBarSeverity.Informational;
+        }
+        void ApplyHardeningPreset(HardeningPreset preset)
+        {
+            applyingHardeningPreset = true;
+            selectedHardening = preset.Options;
+            automaticUpdates.IsChecked = selectedHardening.AutomaticSecurityUpdates;
+            kernelHardening.IsChecked = selectedHardening.KernelHardening;
+            restrictFeatures.IsChecked = selectedHardening.RestrictUnprivilegedFeatures;
+            auditEvents.IsChecked = selectedHardening.AuditSecurityEvents;
+            administrativeTools.IsChecked = selectedHardening.AllowAdministrativeTools;
+            networkAccess.SelectedItem = NetworkPolicyChoices.Single(item => item.Policy == selectedHardening.NetworkAccess);
+            applyingHardeningPreset = false;
+            ShowHardeningDescription(preset);
+            updateAgentPresetAvailability();
+        }
+        void MarkHardeningCustom()
+        {
+            if (applyingHardeningPreset) return;
+            var selectedNetwork = (networkAccess.SelectedItem as NetworkPolicyChoice)?.Policy ?? NetworkAccessPolicy.Unrestricted;
+            if (selectedNetwork == NetworkAccessPolicy.Offline && automaticUpdates.IsChecked == true)
+            {
+                applyingHardeningPreset = true;
+                automaticUpdates.IsChecked = false;
+                applyingHardeningPreset = false;
+            }
+            selectedHardening = new SandboxHardeningOptions(
+                HardeningPresets.CustomId,
+                automaticUpdates.IsChecked == true,
+                kernelHardening.IsChecked == true,
+                restrictFeatures.IsChecked == true,
+                auditEvents.IsChecked == true,
+                selectedNetwork,
+                administrativeTools.IsChecked == true);
+            hardeningPicker.SelectedItem = null;
+            ShowHardeningDescription(null);
+            updateAgentPresetAvailability();
+        }
+        hardeningPicker.SelectionChanged += (_, _) =>
+        {
+            if (!applyingHardeningPreset && hardeningPicker.SelectedItem is HardeningPreset preset) ApplyHardeningPreset(preset);
+        };
+        automaticUpdates.Checked += (_, _) => MarkHardeningCustom();
+        automaticUpdates.Unchecked += (_, _) => MarkHardeningCustom();
+        kernelHardening.Checked += (_, _) => MarkHardeningCustom();
+        kernelHardening.Unchecked += (_, _) => MarkHardeningCustom();
+        restrictFeatures.Checked += (_, _) => MarkHardeningCustom();
+        restrictFeatures.Unchecked += (_, _) => MarkHardeningCustom();
+        auditEvents.Checked += (_, _) => MarkHardeningCustom();
+        auditEvents.Unchecked += (_, _) => MarkHardeningCustom();
+        administrativeTools.Checked += (_, _) => MarkHardeningCustom();
+        administrativeTools.Unchecked += (_, _) => MarkHardeningCustom();
+        networkAccess.SelectionChanged += (_, _) => MarkHardeningCustom();
+        ShowHardeningDescription(hardeningPicker.SelectedItem as HardeningPreset);
+
         var presetPanel = new StackPanel { Spacing = 6 };
         var presetChecks = new List<CheckBox>();
         foreach (var preset in ViewModel.Presets)
@@ -223,6 +317,20 @@ public sealed partial class MainPage : Page
             var check = new CheckBox { Content = $"{preset.DisplayName}  {preset.Version}", Tag = preset.Id, IsChecked = ViewModel.CurrentSettings.SelectedPresetIds.Contains(preset.Id) };
             presetChecks.Add(check); presetPanel.Children.Add(check);
         }
+        var agentPresetNetworkNote = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.7, Visibility = Visibility.Collapsed };
+        presetPanel.Children.Add(agentPresetNetworkNote);
+        updateAgentPresetAvailability = () =>
+        {
+            var offline = selectedHardening.NetworkAccess == NetworkAccessPolicy.Offline;
+            foreach (var check in presetChecks)
+            {
+                check.IsEnabled = !offline;
+                if (offline) check.IsChecked = false;
+            }
+            agentPresetNetworkNote.Text = offline ? "Agent presets are disabled because Offline hardening blocks the registry and remote agent sign-in after provisioning." : "";
+            agentPresetNetworkNote.Visibility = offline ? Visibility.Visible : Visibility.Collapsed;
+        };
+        updateAgentPresetAvailability();
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = "Development boundary", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "The VM isolates development tools from normal Windows work, but it is not a hardened hostile-code boundary. Agent credentials are entered only inside the guest terminal; host credential stores are never copied.", TextWrapping = TextWrapping.Wrap, Opacity = 0.75 });
@@ -234,6 +342,17 @@ public sealed partial class MainPage : Page
         resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition()); resources.ColumnDefinitions.Add(new ColumnDefinition());
         resources.Children.Add(cpu); Grid.SetColumn(memory, 1); resources.Children.Add(memory); Grid.SetColumn(disk, 2); resources.Children.Add(disk);
         panel.Children.Add(resources);
+        panel.Children.Add(new TextBlock { Text = "Sandbox hardening", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        panel.Children.Add(new TextBlock { Text = "Every preset denies unsolicited inbound traffic, disables SSH password and root login, and avoids host mounts and credential forwarding. Choose a preset, then optionally fine-tune it.", TextWrapping = TextWrapping.Wrap, Opacity = 0.72 });
+        panel.Children.Add(hardeningPicker);
+        panel.Children.Add(hardeningDescription);
+        panel.Children.Add(networkAccess);
+        panel.Children.Add(automaticUpdates);
+        panel.Children.Add(kernelHardening);
+        panel.Children.Add(restrictFeatures);
+        panel.Children.Add(auditEvents);
+        panel.Children.Add(administrativeTools);
+        panel.Children.Add(compatibilityNote);
         panel.Children.Add(new TextBlock { Text = "Optional pinned agent presets", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(presetPanel);
 
@@ -260,9 +379,10 @@ public sealed partial class MainPage : Page
         var selected = presetChecks.Where(item => item.IsChecked == true).Select(item => (string)item.Tag).ToArray();
         var progress = new Progress<OperationProgress>(item => ViewModel.OperationLabel = item.Percent is null ? item.Phase : $"{item.Phase} • {item.Percent}%");
         var customUrl = selectedImage.IsUserSupplied ? customImageUrl.Text.Trim() : null;
-        await ViewModel.ProvisionAsync(name.Text.Trim(), selectedImage.Id, customUrl, profile, selected, progress);
+        selectedHardening.Validate();
+        await ViewModel.ProvisionAsync(name.Text.Trim(), selectedImage.Id, customUrl, profile, selected, selectedHardening, progress);
         SelectCurrentSandboxInPicker();
-        await MessageAsync("Agent Sandbox is ready", $"{name.Text.Trim()} ({selectedImage.DisplayName}) passed its health checks, created the clean snapshot, and installed your selected presets.");
+        await MessageAsync("Agent Sandbox is ready", $"{name.Text.Trim()} ({selectedImage.DisplayName}) passed its health checks, applied {HardeningPresets.Describe(selectedHardening)}, created the clean snapshot, and installed your selected agent presets.");
     }
 
     private async Task ShowLegacyImportAsync(LegacyImportCandidate legacy)
@@ -652,6 +772,8 @@ public sealed partial class MainPage : Page
     private static NumberBox Number(string header, double value, double minimum, double maximum) => new() { Header = header, Value = value, Minimum = minimum, Maximum = maximum, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
     private static string ImageDescription(LinuxImage image) =>
         $"{image.Description}{(image.IsCustomImage && !image.IsUserSupplied ? " Multipass downloads this image from the distribution's official host when the VM is created." : "")} Recommended: {image.RecommendedResources.CpuCount} vCPU, {image.RecommendedResources.MemoryGiB} GiB memory, {image.RecommendedResources.DiskGiB} GiB disk.";
+
+    private sealed record NetworkPolicyChoice(NetworkAccessPolicy Policy, string DisplayName);
 
     private ContentDialog Dialog(string title, object content, string? primary, string close)
     {

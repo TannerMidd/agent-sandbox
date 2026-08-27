@@ -16,6 +16,7 @@ Agent Sandbox is a GUI-first Windows app for creating and managing isolated Linu
 - Supports bidirectional drag/drop, queued cancellation, safe conflict handling, UTF-8 editing, permissions, archives, workspace trash/restore, and opt-in read-only system browsing.
 - Includes both an embedded ConPTY terminal and an external Windows Terminal action.
 - Offers pinned presets for Codex CLI, Claude Code, Gemini CLI, and Pi. Authentication happens inside the VM.
+- Lets each new VM use Development, Balanced, Restricted, Offline, or custom hardening, with explicit controls for updates, kernel safeguards, audit rules, outbound networking, passwordless administration, and Docker-socket access.
 - Keeps settings and redacted logs local. There is no telemetry or silent updater.
 
 ## Requirements
@@ -35,7 +36,7 @@ Windows Home, macOS, Linux hosts, persistent host mounts, automatic storage migr
 2. Verify the checksum and the GitHub artifact attestation.
 3. Run the installer. For unsigned previews, SmartScreen may show an unrecognized-app warning.
 4. Launch Agent Sandbox and follow the setup wizard. UAC is requested only for a narrow compiled helper operation.
-5. Choose resources and optional agent presets, then create the VM.
+5. Choose resources, a hardening preset (or individual controls), and optional agent presets, then create the VM. Offline hardening intentionally disables agent preset installation and remote sign-in.
 6. Authenticate an agent from **Open terminal** inside the guest.
 
 Uninstalling Agent Sandbox does **not** delete the VM, its snapshots, or `/home/ubuntu/work`.
@@ -75,7 +76,7 @@ docs/                            Architecture, threat model, privacy, and operat
 
 Agent Sandbox is a development boundary, not a malware-analysis or hostile multi-tenant boundary. Agent-generated code runs in a Hyper-V VM, but any file downloaded to Windows must still be treated as untrusted.
 
-The app uses component-array guest paths, exact Multipass instance names, non-shell process arguments, fail-closed conflicts, symlink/reparse rejection, staged transfers, bounded archive extraction, and exact-target confirmations. The elevated helper accepts only compiled allow-listed operations over a current-user/admin ACL-protected named pipe. See [Threat model](docs/THREAT-MODEL.md) and [Architecture](docs/ARCHITECTURE.md).
+The app uses component-array guest paths, exact Multipass instance names, non-shell process arguments, fail-closed conflicts, symlink/reparse rejection, staged transfers, bounded archive extraction, and exact-target confirmations. Every new VM denies unsolicited inbound traffic and SSH password/root login; stronger per-VM presets can add automatic updates, kernel restrictions, audit rules, egress filtering, and removal of passwordless administrative access. The elevated helper accepts only compiled allow-listed operations over a current-user/admin ACL-protected named pipe. See [Threat model](docs/THREAT-MODEL.md) and [Architecture](docs/ARCHITECTURE.md).
 
 ## Project policies
 
